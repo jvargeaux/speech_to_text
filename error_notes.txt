@@ -1,0 +1,6 @@
+For ssl certificate error, install certificates in python "certifi" module. Run this command:
+
+sudo /Applications/Python\ 3.6/Install\ Certificates.command
+
+
+Taken from: https://stackoverflow.com/questions/49183801/ssl-certificate-verify-failed-with-urllib
