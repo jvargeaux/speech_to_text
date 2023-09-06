@@ -93,6 +93,29 @@ class SpeechToTextRNN():
             plt.colorbar()
             plt.show()
 
+    def preprocess_data(self):
+        # Take random subset
+        # subset = get_random_subset(self.data)
+
+        # For now, take first 10 elements as a test
+        subset = list(self.data)[0:10]
+
+        hop_length = 512  # number of samples to shift
+        n_fft = 2048  # number of samples per fft (window size)
+        n_mfcc = 13  # standard minimum
+
+        for i, item in enumerate(subset):
+            samples, sample_rate, transcript, speaker_id, chapter_id, utterance_id = item
+            samples = samples.numpy()
+
+            mfccs = librosa.feature.mfcc(y=samples, n_fft=n_fft, hop_length=hop_length, n_mfcc=n_mfcc)
+            mfccs = mfccs[0]
+
+            print('mfccs')
+            print(mfccs)
+
+            # Export MFCCs along with other features to file for training
+
 
 def main():
     args = sys.argv[1:]
@@ -103,7 +126,28 @@ def main():
             spectrogram=True if '--spectrogram' in args else False,
             mfcc=True if '--mfcc' in args else False,
             play=True if '--play' in args else False)
+    if '--preprocess' in args:
+        rnn.preprocess_data()
         
 
 if __name__ == '__main__':
     main()
+
+
+def doc_test(blarg: str):
+    """
+    :param blarg: A random string
+    :return: Returns the string 'yo'
+
+    Subtitle 1
+    ----------
+    What's upppppp
+
+    - List 1
+    - Item 2
+
+    >>> import test.blarg as test
+    """
+    librosa.core.st
+
+    return 'yo'
