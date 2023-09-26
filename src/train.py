@@ -15,8 +15,12 @@ import multiprocessing as mp
 import time
 
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+device = 'cpu'
+if torch.cuda.is_available():
+    device = 'cuda'
+elif torch.backends.mps.is_available():
+    device = 'mps'
+device = torch.device(device)
 
 class ProgressBar():
     def __init__(self):
@@ -52,7 +56,7 @@ class SpeechToTextRNN(nn.Module):
             output_size: size of the output data
             num_layers: number of GRU layers
             drop_probability: drop probability of final Dropout layer (if non-zero)
-        
+
         Returns
         ---
             network (object): The neural network (GRU)
@@ -105,7 +109,7 @@ class SpeechToTextTrainer():
         # Updated dataset from LibriLightLimited -> LibriSpeech (same format)
         data = torchaudio.datasets.LIBRISPEECH(root=data_path, url='dev-clean', download=True)
         self.data = data
-    
+
     def show_test_data(self, waveform=False, spectrogram=False, mfcc=False, play=False):
         if self.data is None:
             return
@@ -158,7 +162,7 @@ class SpeechToTextTrainer():
             plt.ylabel('MFCC')
             plt.colorbar()
             plt.show()
-    
+
     def process_audio(self, item):
         samples, sample_rate, transcript, speaker_id, chapter_id, utterance_id = item
 
@@ -208,7 +212,7 @@ class SpeechToTextTrainer():
     def collate(self, batch):
         # Pad batches?
         return batch
-    
+
         # sample_batch, target_batch = [], []
         # for sample, target in batch:
         #     sample_batch.append(sample)
@@ -216,7 +220,7 @@ class SpeechToTextTrainer():
 
         # padded_batch = pad_sequence(sample_batch, batch_first=True)
         # padded_to = list(padded_batch.size())[1]
-        # padded_batch = padded_batch.reshape(len(sample_batch), padded_to, 1)        
+        # padded_batch = padded_batch.reshape(len(sample_batch), padded_to, 1)
 
         # return padded_batch, torch.cat(target_batch, dim=0).reshape(len(sample_batch))
 
@@ -237,7 +241,7 @@ class SpeechToTextTrainer():
             num_processes = mp.cpu_count() - 1 or 1
             print('Using number of processes:', num_processes)
             # pool = mp.Pool(processes=num_processes)
-        
+
         # Build network model
         train_data = mfcc_data
         train_loader = DataLoader(train_data, shuffle=True, batch_size=self.batch_size, drop_last=True, collate_fn=self.collate)
@@ -271,7 +275,7 @@ class SpeechToTextTrainer():
 
             end_time = time.perf_counter()
             print(f'Epoch: {epoch + 1}/{self.num_epochs} | Loss: {avg_loss} | Time Elapsed: {end_time - start_time}')
-        
+
         print('Done training.')
 
 def main():
