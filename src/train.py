@@ -176,6 +176,7 @@ class SpeechToTextTrainer():
             dataset.attrs['chapter_id'] = chapter_id
             dataset.attrs['utterance_id'] = utterance_id
             dataset.attrs['sample_rate'] = sample_rate
+            dataset.attrs['transcript'] = transcript
 
     def preprocess(self, multiprocess=False):
         if self.data is None:
