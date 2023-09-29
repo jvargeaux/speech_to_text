@@ -279,6 +279,7 @@ class SpeechToTextTrainer():
 
         print('Done training.')
 
+
 def main():
     print(f'device: {device}')
     args = sys.argv[1:]
