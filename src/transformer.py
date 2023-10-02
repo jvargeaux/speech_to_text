@@ -9,11 +9,11 @@ from typing import Optional
 class Logger():
     def __init__(self, debug=True):
         self.debug = debug
-    
+
     def __call__(self, *args):
         if self.debug:
             print(*args)
-    
+
 log = Logger(debug=False)
 
 
@@ -50,8 +50,9 @@ class AudioEmbedder(nn.Module):
       | [o] //
     ```
     '''
-    def __init__(self, embed_dim: int):
+    def __init__(self, embed_dim: int, device):
         super().__init__()
+        self.device = device
         self.embed_dim = embed_dim
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels=1, out_channels=4, kernel_size=5, padding=2),
@@ -70,7 +71,7 @@ class AudioEmbedder(nn.Module):
         # log('Padded:', padded.shape)
         return reshaped
 
-    def embed(self, source: Tensor, target_length: int):
+    def forward(self, source: Tensor, target_length: int):
         log('[Audio Embedder] Source shape:', source.shape)
         log('[Audio Embedder] Target sequence length:', target_length)
         log('[Audio Embedder] Embed dimension:', self.embed_dim)
@@ -79,17 +80,17 @@ class AudioEmbedder(nn.Module):
         # log('Square:', square.shape)
         out = square.unsqueeze(0)  # Add 1 dimension for conv input channel
         out = self.conv(out)  # Shape: (conv_channels, dim_1, dim_2)
-        normalize = nn.LayerNorm(out.shape[-1])
+        normalize = nn.LayerNorm(out.shape[-1]).to(self.device)
         out = normalize(out)
         # log('Conv & Norm:', out.shape)
         out = out.view(-1, out.shape[-1]).contiguous()  # (conv_channels*dim_1, dim_2)
         # log('Flatten:', out.shape)
-        linear1 = nn.Linear(in_features=out.shape[1], out_features=target_length)  # dim_2 -> target_length
+        linear1 = nn.Linear(in_features=out.shape[1], out_features=target_length).to(self.device)  # dim_2 -> target_length
         out = linear1(out)  # (conv_channels*dim_1, target_length)
         # log('Linear1:', out.shape)
         out = out.transpose(0, 1).contiguous()  # (target_length, conv_channels*dim_1)
         # log('Flip:', out.shape)
-        linear2 = nn.Linear(in_features=out.shape[1], out_features=self.embed_dim)  # conv_channels*dim_1 -> embed_dim
+        linear2 = nn.Linear(in_features=out.shape[1], out_features=self.embed_dim).to(self.device)  # conv_channels*dim_1 -> embed_dim
         out = linear2(out)  # (target_length, embed_dim)
         # log('Linear2:', out.shape)
         return out
@@ -214,8 +215,9 @@ class PositionalEncoding(nn.Module):
 
 
 class MultiheadAttention(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.1):
+    def __init__(self, d_model: int, num_heads: int, dropout: float, device):
         super().__init__()
+        self.device = device
         self.d_model = d_model
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
@@ -230,6 +232,7 @@ class MultiheadAttention(nn.Module):
         # Compute "Scaled Dot Product Attention"
         d_k = query.size(-1)
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
+        log('[Multihead Attention] Scores (attention) shape:', scores.shape)
         if mask is not None:
             scores = scores.masked_fill(mask==0, -1e9)
         prob = softmax(scores, dim=-1)
@@ -238,17 +241,15 @@ class MultiheadAttention(nn.Module):
         return torch.matmul(prob, value), prob
 
     def forward(self, query, key, value, mask = None):
-        log('[Multihead Attention]', 'Shape of Q/K/V:', value.shape)
-        N = query.shape[0]  # Batch size
-        log('[Multihead Attention]', 'Num heads:', self.num_heads)
-        log('[Multihead Attention]', 'Head dimension:', self.head_dim)
-        log('[Multihead Attention]', 'Mask:', mask)
+        N = query.shape[0]  # batch size
+        log('[Multihead Attention] Shape of Q/K/V:', value.shape)
+        log('[Multihead Attention] Num heads:', self.num_heads)
+        log('[Multihead Attention] Head dimension:', self.head_dim)
+        log('[Multihead Attention] Batch size:', N)
 
         if mask is not None:
             mask = mask.unsqueeze(1)
-            pass
-        num_batches = 1
-        # num_batches = query.size(0)
+            log('[Multihead Attention] Mask shape:', mask.shape)
 
         # Linear projections
         value = self.linear(value)
@@ -260,18 +261,21 @@ class MultiheadAttention(nn.Module):
         # Reshape: (sequence_length, embed_dim) -> (batch_size, query_length, num_heads, head_dim)
         # Then: (batch_size, query_length, num_heads, head_dim) ->
         #       (query_length, batch_size, num_heads, head_dim)
-        value = value.view(num_batches, -1, self.num_heads, self.head_dim).transpose(1, 0)
-        key = key.view(num_batches, -1, self.num_heads, self.head_dim).transpose(1, 0)
-        query = query.view(num_batches, -1, self.num_heads, self.head_dim).transpose(1, 0)
-        log('[Multihead Attention]', 'Shape of Q/K/V after reshape:', value.shape)
+        value = value.view(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        key = key.view(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        query = query.view(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        log('[Multihead Attention] Shape of sliced Q/K/V:', value.shape)
 
         # 2) Apply attention on all projected vectors
         x, self.attention = self._attention(query, key, value, mask=mask, dropout=self.dropout)
+        log('[Multihead Attention] Shape of attention output:', x.shape, self.attention.shape)
 
         # 3) Concat (flatten last 2 dimensions)
         # Essentially, undo the reshape we did earlier
-        out = x.transpose(0, 1).contiguous().view(num_batches, -1, self.num_heads * self.head_dim)
+        # Final shape: (batch_size, )
+        out = x.transpose(0, 1).contiguous().view(N, -1, self.num_heads * self.head_dim)
         out = self.linear(out)
+        log('[Multihead Attention] Shape of concat (flattened) attention:', out.shape)
         return out
 
 
@@ -303,12 +307,12 @@ class Encoder(nn.Module):
     Output
     ```
     '''
-    def __init__(self, d_model: int, num_layers: int, dropout: float, num_heads: int, forward_expansion: int = 4,
+    def __init__(self, d_model: int, num_layers: int, dropout: float, num_heads: int, device, forward_expansion: int = 4,
                  mask: Optional[Tensor] = None):
         super().__init__()
         self.d_model = d_model
         self.num_layers = num_layers
-        self.attention = MultiheadAttention(d_model, num_heads)
+        self.attention = MultiheadAttention(d_model=d_model, num_heads=num_heads, dropout=dropout, device=device)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.feed_forward = nn.Sequential(
@@ -370,12 +374,12 @@ class Decoder(nn.Module):
     Output Probabilities
     ```
     '''
-    def __init__(self, d_model: int, num_layers: int, dropout: float, num_heads: int, forward_expansion: int = 4,
+    def __init__(self, d_model: int, num_layers: int, dropout: float, num_heads: int, device, forward_expansion: int = 4,
                  mask: Optional[Tensor] = None):
         super().__init__()
         self.d_model = d_model
         self.num_layers = num_layers
-        self.attention = MultiheadAttention(d_model, num_heads)
+        self.attention = MultiheadAttention(d_model=d_model, num_heads=num_heads, dropout=dropout, device=device)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.norm3 = nn.LayerNorm(d_model)
@@ -422,15 +426,52 @@ class Transformer(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.device = device
-        self.audio_embedder = AudioEmbedder(embed_dim=d_model)
+        self.audio_embedder = AudioEmbedder(embed_dim=d_model, device=device)
         self.word_embeddings = WordEmbedder(vocab_size=vocab_size, d_model=d_model)
         self.positional_encoding = PositionalEncoding(d_model=d_model, dropout=dropout, max_length=max_length)
-        self.encoder = Encoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers)
-        self.decoder = Decoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers)
+        self.encoder = Encoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
+        self.decoder = Decoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
         self.linear = nn.Linear(d_model, vocab_size)
 
+    def make_mask(self, source: Tensor):
+        # Encoder output shape: (batch_size, sequence_length, d_model)
+        log('[Mask] Encoder output (source) shape:', source.shape)
+        N, target_length, _ = source.shape
+
+        attention_shape = (1, target_length, target_length)  # (1, sequence_length, sequence_length)
+        mask = torch.tril(torch.ones(attention_shape)).to(self.device)
+        log('[Mask] Attention mask shape:', mask.shape)
+        # Final mask shape at multihead attention will be: (batch_size, 1, sequence_length, sequence_length)
+
+        # Calculate tokens?
+
+        # pad = 0
+        # target = source[:, :-1]
+        # target_y = source[:, 1:]
+        # # New target (target_y) shape: (batch_size, sequence_length - 1, d_model)
+        # print('[Mask] Target (Target_y) shape:', target.shape)
+
+        # target_mask = (target != pad)
+        # # target_mask = (target != pad).unsqueeze(-2)
+        # print('[Mask] Target Mask shape:', target_mask.shape)
+        # print('[Mask] Target Mask:', target_mask)
+        # target_mask = target_mask & mask.type_as(target_mask.data)
+        # print('[Mask] Target Mask:', target_mask)
+
+        # num_tokens = (target_y != pad).data.sum()
+        # print('[Mask] Num tokens:', num_tokens)
+
+        return mask
+
     def forward(self, source_mfccs: Tensor, target_sequence: Tensor):
-        source = self.audio_embedder.embed(source_mfccs, len(target_sequence))
+        '''
+        Source shape: (batch_size, num_chunks, mfcc_length)
+        Target shape: (batch_size, sequence_length)
+        '''
+
+        # NOTE: Need to implement batching for audio embedder, word embedder, and positional encoding
+
+        source = self.audio_embedder(source_mfccs, len(target_sequence))
         log('[Transformer] Source shape:', source.shape)
         log('[Transformer] Audio Embedding Output:', source.shape)
         log('[Transformer] Size of word embedding matrix:', self.word_embeddings.embeddings_lut)
@@ -439,15 +480,22 @@ class Transformer(nn.Module):
         # Encoder
         source = self.positional_encoding(source)
         log('[Transformer] Source shape after positional encoding:', source.shape)
+        source = source.unsqueeze(0)  # Add batches: (sequence_length, d_model) -> (batch_size, sequence_length, d_model)
+        log('[Transformer] Shape of encoder input:', source.shape)
         encoder_out = self.encoder(x=source, mask=None)
         log('[Transformer] Shape of encoder output:', encoder_out.shape)
+
+        target_mask = self.make_mask(source=encoder_out)
+        log('[Transformer] Target mask shape:', target_mask.shape)
 
         # Decoder
         target = self.word_embeddings(target_sequence)
         log('[Transformer] Target shape after word embeddeding:', target.shape)
         target = self.positional_encoding(target)
         log('[Transformer] Target shape after positional encoding:', target.shape)
-        decoder_out = self.decoder(x=target, encoder_out=encoder_out, source_mask=None, target_mask=None)
+        target = target.unsqueeze(0)  # Add batches: (sequence_length, d_model) -> (batch_size, sequence_length, d_model)
+        log('[Transformer] Shape of decoder input:', target.shape)
+        decoder_out = self.decoder(x=target, encoder_out=encoder_out, source_mask=None, target_mask=target_mask)
         log('[Transformer] Shape of decoder output:', decoder_out.shape)
 
         out = log_softmax(self.linear(decoder_out), dim=-1)

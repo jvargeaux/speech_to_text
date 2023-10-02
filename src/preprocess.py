@@ -13,6 +13,7 @@ import h5py
 import os
 import multiprocessing as mp
 import time
+from enum import Enum
 
 
 device = 'cpu'
@@ -21,6 +22,17 @@ if torch.cuda.is_available():
 elif torch.backends.mps.is_available():
     device = 'mps'
 device = torch.device(device)
+
+
+class SPLITS(Enum):
+    DEV_CLEAN = 'dev-clean'
+    DEV_OTHER = 'dev-other'
+    TRAIN_CLEAN_100 = 'train-clean-100'
+    TRAIN_CLEAN_360 = 'train-clean-360'
+    TRAIN_OTHER_500 = 'train-other-500'
+    TEST_CLEAN = 'test-clean'
+    TEST_OTHER = 'test-other'
+
 
 class ProgressBar():
     def __init__(self):
@@ -38,76 +50,29 @@ class ProgressBar():
             print()
 
 
-class SpeechToTextRNN(nn.Module):
-    """
-        GRU-based Recurrent Neural Network. Extends torch.nn.Module.
-
-        Architecture
-        - GRU Layer (64)
-        - GRU Layer (64)
-        - Dense Layer
-        - Dropout Layer (to prevent overfitting)
-        - Dense Layer (softmax output)
-
-        Parameters
-        ---
-            input_size: size of the input data
-            hidden_size: size of the GRU hidden state
-            output_size: size of the output data
-            num_layers: number of GRU layers
-            drop_probability: drop probability of final Dropout layer (if non-zero)
-
-        Returns
-        ---
-            network (object): The neural network (GRU)
-    """
-    def __init__(self, input_size, hidden_size=64, output_size=16, num_layers=2, drop_probability=0.2):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-
-        # Network Layers
-        self.gru = nn.GRU(input_size,
-                          hidden_size=hidden_size,
-                          num_layers=num_layers,
-                          batch_first=True,
-                          dropout=drop_probability)
-        self.fc = nn.Linear(hidden_size, output_size)
-        self.relu = nn.ReLU()
-
-    def forward(self, x, h):
-        output, hidden_state = self.gru(x, h)
-        output = self.fc(self.relu(output[:,-1]))
-        return output, hidden_state
-
-    def init_hidden(self, batch_size):
-        weight = next(self.parameters()).data
-        hidden = weight.new(self.num_layers, batch_size, self.hidden_size).zero_().to(device)
-        return hidden
-
-
 class SpeechToTextTrainer():
-    def __init__(self):
-        # Set hyperparameters
-        self.batch_size = 8
-        self.hidden_size = 256
-        self.drop_probability = 0.2
-        self.learn_rate = 0.001
-        self.num_epochs = 2
-
+    '''
+    Arguments
+    - dataset_url: Name of dataset split, check SPLITS enum for options
+    '''
+    def __init__(self, dataset_url: str = 'DEV_CLEAN'):
         # Set MFCC meta parameters
         self.hop_length = 512  # number of samples to shift
         self.n_fft = 2048  # number of samples per fft (window size)
         self.n_mfcc = 13  # standard minimum
 
-        self.download_dataset()
+        self.data = None
+        self.download_dataset(url=dataset_url)
 
-    def download_dataset(self):
+    def download_dataset(self, url: str):
+        if url not in [item.value for item in SPLITS]:
+            print('Invalid dataset url. Check SPLITS enum for options.')
+            return
         data_path = Path('data')
         if not data_path.exists():
             data_path.mkdir(parents=True)
         # Updated dataset from LibriLightLimited -> LibriSpeech (same format)
-        data = torchaudio.datasets.LIBRISPEECH(root=data_path, url='dev-clean', download=True)
+        data = torchaudio.datasets.LIBRISPEECH(root=data_path, url=url, download=True)
         self.data = data
 
     def show_test_data(self, waveform=False, spectrogram=False, mfcc=False, play=False):
@@ -225,65 +190,15 @@ class SpeechToTextTrainer():
 
         # return padded_batch, torch.cat(target_batch, dim=0).reshape(len(sample_batch))
 
-    def train(self):
-        # Load data
-        print('Loading MFCC data...')
-        mfcc_data = []
-        for root, directories, files in os.walk('mfcc'):
-            for file in files:
-                with h5py.File(f'mfcc/{file}', 'r') as file_data:
-                    mfcc_data.append([file_data['mfccs'][:],
-                                     file_data['mfccs'].attrs['sample_rate'],
-                                     file_data['mfccs'].attrs['speaker_id']])
-        print('MFCC data loaded.')
-
-        if device == 'cpu':
-            # Multiprocess
-            num_processes = mp.cpu_count() - 1 or 1
-            print('Using number of processes:', num_processes)
-            # pool = mp.Pool(processes=num_processes)
-
-        # Build network model
-        train_data = mfcc_data
-        train_loader = DataLoader(train_data, shuffle=True, batch_size=self.batch_size, drop_last=True, collate_fn=self.collate)
-        batch = next(iter(train_loader))
-        item = batch[0]
-        mfccs = item[0]
-        print('Shape of mfccs:', mfccs.shape)
-        input_size = mfccs.shape[1]
-        print('Input size:', input_size)
-        model = SpeechToTextRNN(input_size=input_size,
-                              hidden_size=self.hidden_size,
-                              output_size=64,
-                              num_layers=2,
-                              drop_probability=self.drop_probability)
-        model.to(device)
-
-        # Define loss & optimizer
-        criterion = nn.MSELoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=self.learn_rate)
-
-        model.train()
-        print('Training network...')
-
-        # Training
-        for epoch in range(0, self.num_epochs):
-            start_time = time.perf_counter()
-
-            h = model.init_hidden(self.batch_size)
-            avg_loss = 0
-            # Perform forward and calculate loss
-
-            end_time = time.perf_counter()
-            print(f'Epoch: {epoch + 1}/{self.num_epochs} | Loss: {avg_loss} | Time Elapsed: {end_time - start_time}')
-
-        print('Done training.')
-
 
 def main():
     print(f'device: {device}')
     args = sys.argv[1:]
-    trainer = SpeechToTextTrainer()
+
+    dataset_url = SPLITS.DEV_CLEAN.value
+    print('Dataset split:', dataset_url)
+    trainer = SpeechToTextTrainer(dataset_url=dataset_url)
+
     if '--display' in args:
         trainer.show_test_data(
             waveform=True if '--waveform' in args else False,
