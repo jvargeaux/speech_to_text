@@ -5,6 +5,8 @@ from torch import nn, Tensor
 from torch.nn.functional import pad, softmax, log_softmax
 from typing import Optional
 
+from src.metrics import Metrics
+
 
 class Logger():
     def __init__(self, debug=True):
@@ -15,6 +17,7 @@ class Logger():
             print(*args)
 
 log = Logger(debug=False)
+metrics = Metrics(debug=False)
 
 
 class AudioEmbedder(nn.Module):
@@ -61,7 +64,7 @@ class AudioEmbedder(nn.Module):
         )
 
     def make_square(self, source: Tensor):
-        # Input shape: (n, d_m)
+        # Input shape: (n, mfcc_length)
         dim_ratio = round(math.sqrt(source.shape[0] // source.shape[1]))
         remainder = source.shape[0] % dim_ratio
         pad_amount = dim_ratio - remainder if remainder != 0 else 0
@@ -76,23 +79,39 @@ class AudioEmbedder(nn.Module):
         log('[Audio Embedder] Target sequence length:', target_length)
         log('[Audio Embedder] Embed dimension:', self.embed_dim)
 
+        # metrics.add_heatmap(data=source)
+
         square = self.make_square(source)
+
+        # metrics.add_heatmap(data=square)
+
         # log('Square:', square.shape)
         out = square.unsqueeze(0)  # Add 1 dimension for conv input channel
         out = self.conv(out)  # Shape: (conv_channels, dim_1, dim_2)
-        normalize = nn.LayerNorm(out.shape[-1]).to(self.device)
+        normalize = nn.LayerNorm(out.shape[-1])
         out = normalize(out)
         # log('Conv & Norm:', out.shape)
         out = out.view(-1, out.shape[-1]).contiguous()  # (conv_channels*dim_1, dim_2)
+
+        # metrics.add_heatmap(data=out)
+        
         # log('Flatten:', out.shape)
-        linear1 = nn.Linear(in_features=out.shape[1], out_features=target_length).to(self.device)  # dim_2 -> target_length
+        linear1 = nn.Linear(in_features=out.shape[1], out_features=target_length)  # dim_2 -> target_length
         out = linear1(out)  # (conv_channels*dim_1, target_length)
+
+        # metrics.add_heatmap(data=out)
+
         # log('Linear1:', out.shape)
         out = out.transpose(0, 1).contiguous()  # (target_length, conv_channels*dim_1)
         # log('Flip:', out.shape)
-        linear2 = nn.Linear(in_features=out.shape[1], out_features=self.embed_dim).to(self.device)  # conv_channels*dim_1 -> embed_dim
+        linear2 = nn.Linear(in_features=out.shape[1], out_features=self.embed_dim)  # conv_channels*dim_1 -> embed_dim
         out = linear2(out)  # (target_length, embed_dim)
         # log('Linear2:', out.shape)
+
+        # metrics.add_heatmap(data=out)
+
+        # metrics.show_heatmaps()
+
         return out
 
 
@@ -144,13 +163,14 @@ class WordEmbedder(nn.Module):
         # If we have not pre-trained, we have no word vectors yet
         # Initalize randomized word embedding vectors of size embed_dim
         self.embeddings_lut = nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+        self.norm = nn.LayerNorm(d_model)
 
     def forward(self, x):
         log('[Embedding]')
         # Average out the magnitude of the vectors by multiplying by the square root of the dimensions
         # Ex: [2, 2, 2] (d = 3)
         # Magnitude: sqrt(2^2 + 2^2 + 2^2) = sqrt(3 * 2^2) = sqrt(3) * 2 = sqrt(d) * 2
-        return self.embeddings_lut(x) * math.sqrt(self.d_model)
+        return self.norm(self.embeddings_lut(x) * math.sqrt(self.d_model))
 
 
 class PositionalEncoding(nn.Module):
@@ -199,16 +219,16 @@ class PositionalEncoding(nn.Module):
         div_term = torch.exp(torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model))
         positional_encoding[:, 0::2] = torch.sin(position * div_term)  # Evens
         positional_encoding[:, 1::2] = torch.cos(position * div_term)  # Odds
-        positional_encoding.unsqueeze(0)
+        # positional_encoding = positional_encoding.unsqueeze(0)  # Add 1 dimension for batches
 
         self.register_buffer('positional_encoding', positional_encoding)
 
     def forward(self, x: Tensor) -> Tensor:
         '''
         Parameters:
-        - x: Tensor, shape `[sequence_length, batch_size, embed_dim]`
+        - x: Tensor, shape `[sequence_length, embed_dim]`
         '''
-        log('[Positional Encoding]')
+        log('[Positional Encoding]', x.shape)
         # Add encoding to each element in sequence (token as vectorized work embedding)
         x = x + self.positional_encoding[:x.size(0)]
         return self.dropout(x)
@@ -422,16 +442,23 @@ class Transformer(nn.Module):
     share a common weight matrix.
     '''
     def __init__(self, vocab_size: int, d_model: int, num_layers: int, dropout: float,
-                 num_heads: int, max_length: int, device):
+                 num_heads: int, max_length: int, device, debug = False):
         super().__init__()
         self.d_model = d_model
         self.device = device
+        self.debug = debug
         self.audio_embedder = AudioEmbedder(embed_dim=d_model, device=device)
         self.word_embeddings = WordEmbedder(vocab_size=vocab_size, d_model=d_model)
         self.positional_encoding = PositionalEncoding(d_model=d_model, dropout=dropout, max_length=max_length)
         self.encoder = Encoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
         self.decoder = Decoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
         self.linear = nn.Linear(d_model, vocab_size)
+
+        if debug:
+            global log
+            global metrics
+            log = Logger(debug=debug)
+            metrics = Metrics(debug=debug)
 
     def make_mask(self, source: Tensor):
         # Encoder output shape: (batch_size, sequence_length, d_model)
@@ -468,9 +495,11 @@ class Transformer(nn.Module):
         Source shape: (batch_size, num_chunks, mfcc_length)
         Target shape: (batch_size, sequence_length)
         '''
+        metrics = Metrics(debug=self.debug)
 
         # NOTE: Need to implement batching for audio embedder, word embedder, and positional encoding
 
+        metrics.add_heatmap(data=source_mfccs, ylabel='Source MFCCs')
         source = self.audio_embedder(source_mfccs, len(target_sequence))
         log('[Transformer] Source shape:', source.shape)
         log('[Transformer] Audio Embedding Output:', source.shape)
@@ -478,25 +507,39 @@ class Transformer(nn.Module):
         log('[Transformer] Size of positional encoding matrix:', self.positional_encoding.get_buffer('positional_encoding').shape)
 
         # Encoder
+        metrics.add_heatmap(data=source, ylabel='Source audio embedding')
         source = self.positional_encoding(source)
+        metrics.add_heatmap(data=source, ylabel='Source pos encoding')
         log('[Transformer] Source shape after positional encoding:', source.shape)
         source = source.unsqueeze(0)  # Add batches: (sequence_length, d_model) -> (batch_size, sequence_length, d_model)
         log('[Transformer] Shape of encoder input:', source.shape)
         encoder_out = self.encoder(x=source, mask=None)
         log('[Transformer] Shape of encoder output:', encoder_out.shape)
+        metrics.add_heatmap(data=encoder_out[0], ylabel='Encoder out')
 
-        target_mask = self.make_mask(source=encoder_out)
-        log('[Transformer] Target mask shape:', target_mask.shape)
+        # target_mask = self.make_mask(source=encoder_out)
+        # log('[Transformer] Target mask shape:', target_mask.shape)
 
         # Decoder
         target = self.word_embeddings(target_sequence)
         log('[Transformer] Target shape after word embeddeding:', target.shape)
+        metrics.add_heatmap(data=target, ylabel='Target word embedding')
         target = self.positional_encoding(target)
         log('[Transformer] Target shape after positional encoding:', target.shape)
+        metrics.add_heatmap(data=target, ylabel='Target pos encoding')
+
+        target_mask = self.make_mask(source=target.unsqueeze(0))
+        log('[Transformer] Target mask shape:', target_mask.shape)
+        metrics.add_heatmap(data=target_mask[0], ylabel='Target mask')
+
         target = target.unsqueeze(0)  # Add batches: (sequence_length, d_model) -> (batch_size, sequence_length, d_model)
         log('[Transformer] Shape of decoder input:', target.shape)
         decoder_out = self.decoder(x=target, encoder_out=encoder_out, source_mask=None, target_mask=target_mask)
         log('[Transformer] Shape of decoder output:', decoder_out.shape)
+        metrics.add_heatmap(data=decoder_out[0], ylabel='Decoder out')
 
-        out = log_softmax(self.linear(decoder_out), dim=-1)
+        # out = log_softmax(self.linear(decoder_out), dim=-1)
+        out = self.linear(decoder_out)  # Trying no softmax
+        metrics.add_heatmap(data=out[0], ylabel='Out')
+        metrics.show_heatmaps()
         return out

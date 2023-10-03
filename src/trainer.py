@@ -4,10 +4,12 @@ import time
 import torch
 from torch import nn, Tensor
 from torch.utils.data import DataLoader
-
+import torch.nn.functional as F
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
+
 from src.transformer import Transformer
+from src.metrics import Metrics
 
 
 class Vocabulary():
@@ -30,8 +32,9 @@ class Vocabulary():
         # Convert tokens -> vocab indices -> tensor
         return torch.tensor(self.vocab(self.tokenizer(source_sequence)), dtype=torch.long).to(self.device)
 
-    def get_word_from_index(self, index: int):
-        return self.vocab.lookup_token(index)
+    def get_sequence_from_tensor(self, indices: Tensor):
+        return self.vocab.lookup_tokens(indices=list(indices))
+        # return self.vocab.lookup_token(index)
 
 
 class LabelSmoothing(nn.Module):
@@ -46,8 +49,9 @@ class LabelSmoothing(nn.Module):
         '''
         x: Model output, shape (batch_size, sequence_length, vocab_size)
         '''
+        print('x shape:', x.shape)
         true_dist = x.data.clone()[0]
-        size = x.size(2)
+        size = x.size(-1)
         true_dist.fill_(self.smoothing / (size - 2))
         true_dist.scatter_(1, target_sequence.data.unsqueeze(1), self.confidence)
         true_dist[:, 0] = 0
@@ -61,13 +65,14 @@ class LabelSmoothing(nn.Module):
 
 class Trainer():
     def __init__(self, d_model: int, num_layers: int, dropout: float, num_heads: int,
-                 max_length: int, device):
+                 max_length: int, device, debug = False):
         self.device = device
         self.d_model = d_model
         self.num_layers = num_layers
         self.dropout = dropout
         self.num_heads = num_heads
         self.max_length = max_length
+        self.debug = debug
 
     def collate(self, batch):
         # Pad batches?
@@ -85,9 +90,22 @@ class Trainer():
         # return padded_batch, torch.cat(target_batch, dim=0).reshape(len(sample_batch))
 
     def train(self, num_epochs: int, batch_size: int, optimizer, learning_rate):
+        print('Embed dimension (d model):', self.d_model)
+        print('Num attention heads:', self.num_heads)
+        print('Num encoder/decoder layers:', self.num_layers)
+        print('Max sequence length:', self.max_length)
+        print('Dropout probability:', self.dropout)
+        print('Batch size:', batch_size)
+        print('Learning rate:', learning_rate)
+        print()
+
+        num_files = None  # Reduce dataset to subset, None = all
+
         # Import preprocessed mfcc data
         data = []
         for _, _, files in os.walk('mfcc'):
+            if num_files is not None:
+                files = files[:num_files]
             for file in files:
                 with h5py.File(f'mfcc/{file}', 'r') as file_data:
                     data.append([file_data['mfccs'][:],
@@ -120,12 +138,17 @@ class Trainer():
         # Build model
         self.model = Transformer(vocab_size=vocab_size, d_model=self.d_model, dropout=self.dropout,
                             num_heads=self.num_heads, max_length=self.max_length, num_layers=self.num_layers,
-                            device=self.device).to(self.device)
+                            device=self.device, debug=self.debug).to(self.device)
 
         optimizer = optimizer(self.model.parameters(), lr=learning_rate, betas=(0.9, 0.98), eps=1e-9)
 
+        # NOTE: need to fix data shaping of source & target vector distribution
+        # criterion = LabelSmoothing(smoothing=0.1)
+        criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+        
+        metrics = Metrics(debug=self.debug)
 
-
+        self.model.train()
         for epoch in range(num_epochs):
             start = time.time()
             total_tokens = 0
@@ -143,24 +166,60 @@ class Trainer():
 
                 # Train
                 out = self.model(source_mfccs=source_mfccs, target_sequence=target_sequence)
-                guess_index = torch.argmax(out[0][-1])
-                prediction = vocabulary.get_word_from_index(guess_index)
-                # print(f'Prediction: {guess_index} | {prediction}')
+                prediction = out[0]  # batch of 1 for now
+                target_y = target_sequence
 
-                criterion = LabelSmoothing(smoothing=0.1)
+                pred_x = prediction[:-1]
                 target_y = target_sequence[1:]
-                # num_tokens
-                loss = criterion(out, target_sequence)
 
+                # Calculate loss & perform backprop
+                loss = criterion(pred_x, target_y)
                 loss.backward()
                 optimizer.step()
                 optimizer.zero_grad()
 
-                # print('Target Sequence:', target_sequence)
-                # print('Target Y:', target_y)
-                # print('Criterion input:', out[0].shape, target_sequence.shape)
-                # print('Loss:', loss)
+                # For showing prediction
+                prediction_indices = torch.argmax(out, dim=-1)[0]
+                prediction_sequence = vocabulary.get_sequence_from_tensor(prediction_indices)
 
-                if i % 50 == 0:
+                if self.debug:
                     elapsed = time.time() - start
-                    print(f'Epoch: {epoch+1}/{num_epochs} | Step: {i}/{num_steps} | Loss: {loss.item():.4f} | Time: {elapsed:.4f}')
+                    print(f'Epoch: {epoch+1}/{num_epochs} | Step: {i}/{num_steps} | Loss: {loss.item():.4f} | Time: {elapsed:.1f}')
+
+                    print()
+                    print('Loss inputs:', prediction.shape, target_y.shape)
+                    print()
+                    print('Prediction indices:', prediction_indices)
+                    print('Prediction sequence:', prediction_sequence)
+                    print('Prediction shape:', prediction_indices.shape)
+                    print()
+                    print('Target indices:', target_y)
+                    print('Target sequence:', transcripts[0])
+                    print('Target shape:', target_y.shape)
+                    print()
+
+                    # metrics.show_confusion_matrix(target=target_y, predicted=prediction_indices)
+
+                    # prediction_no_grad = prediction.clone().detach().requires_grad_(False)
+                    # # prediction_display = F.softmax(prediction_no_grad, dim=-1)
+                    # metrics.show_heatmap(data=prediction_no_grad, xlabel='Vocab', ylabel='Sequence')
+
+                    return
+
+                if i % 5 == 0:
+                    elapsed = time.time() - start
+                    print(f'Epoch: {epoch+1}/{num_epochs} | Step: {i}/{num_steps} | Loss: {loss.item():.4f} | Elapsed: {elapsed:.1f}s')
+                
+                # Testing on small dataset and large number of epochs
+                # if epoch % 5 == 0 and i == (num_steps - 1):
+                #     print()
+                #     print('Loss inputs:', prediction.shape, target_y.shape)
+                #     print()
+                #     print('Prediction indices:', prediction_indices)
+                #     print('Prediction sequence:', prediction_sequence)
+                #     print('Prediction shape:', prediction_indices.shape)
+                #     print()
+                #     print('Target indices:', target_y)
+                #     print('Target sequence:', transcripts[0])
+                #     print('Target shape:', target_y.shape)
+                #     print()
