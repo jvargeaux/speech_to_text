@@ -88,7 +88,7 @@ class AudioEmbedder(nn.Module):
         # log('Square:', square.shape)
         out = square.unsqueeze(0)  # Add 1 dimension for conv input channel
         out = self.conv(out)  # Shape: (conv_channels, dim_1, dim_2)
-        normalize = nn.LayerNorm(out.shape[-1])
+        normalize = nn.LayerNorm(out.shape[-1], device=self.device)
         out = normalize(out)
         # log('Conv & Norm:', out.shape)
         out = out.view(-1, out.shape[-1]).contiguous()  # (conv_channels*dim_1, dim_2)
@@ -96,7 +96,7 @@ class AudioEmbedder(nn.Module):
         # metrics.add_heatmap(data=out)
         
         # log('Flatten:', out.shape)
-        linear1 = nn.Linear(in_features=out.shape[1], out_features=target_length)  # dim_2 -> target_length
+        linear1 = nn.Linear(in_features=out.shape[1], out_features=target_length, device=self.device)  # dim_2 -> target_length
         out = linear1(out)  # (conv_channels*dim_1, target_length)
 
         # metrics.add_heatmap(data=out)
@@ -104,7 +104,7 @@ class AudioEmbedder(nn.Module):
         # log('Linear1:', out.shape)
         out = out.transpose(0, 1).contiguous()  # (target_length, conv_channels*dim_1)
         # log('Flip:', out.shape)
-        linear2 = nn.Linear(in_features=out.shape[1], out_features=self.embed_dim)  # conv_channels*dim_1 -> embed_dim
+        linear2 = nn.Linear(in_features=out.shape[1], out_features=self.embed_dim, device=self.device)  # conv_channels*dim_1 -> embed_dim
         out = linear2(out)  # (target_length, embed_dim)
         # log('Linear2:', out.shape)
 

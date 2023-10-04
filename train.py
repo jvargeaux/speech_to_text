@@ -3,58 +3,70 @@ import os
 import torch
 from torch import nn
 from src.trainer import Trainer
+from config import config
 
 
-# print(os.getenv('PYTORCH_ENABLE_MPS_FALLBACK'))
+def main():
+    parser = argparse.ArgumentParser(
+        prog='S2T Trainer',
+        description='Train the S2T transformer neural network',
+        epilog='Epilogue sample text')
+    
+    # Hyperparameters from args/config
+    parser.add_argument('d_model', type=int, nargs='?', default=config['d_model'], help='Size of embedding vector')
+    parser.add_argument('num_heads', type=int, nargs='?', default=config['num_heads'], help='Number of attention heads')
+    parser.add_argument('dropout', type=float, nargs='?', default=config['dropout'], help='Dropout probability')
+    parser.add_argument('max_length', type=int, nargs='?', default=config['max_length'], help='Max sequence length')
+    parser.add_argument('num_layers', type=int, nargs='?', default=config['num_layers'], help='Number of encoder/decoder layers')
+    parser.add_argument('num_epochs', type=int, nargs='?', default=config['num_epochs'], help='Number of epochs')
+    parser.add_argument('batch_size', type=int, nargs='?', default=config['batch_size'], help='Size of each batch')
+    parser.add_argument('learning_rate', type=float, nargs='?', default=config['learning_rate'], help='Base learning rate')
+    
+    parser.add_argument('-d', '--debug', action='store_true',
+                        help='Run through only one training example for debugging')
+    parser.add_argument('num_debug_layers', type=int, nargs='?', default=config['num_debug_layers'],
+                        help='Number of encoder/decoder layers in debug mode')
 
-# Set to avoid this error:
-# NotImplementedError: The operator 'aten::index_fill_.int_Scalar' is not currently
-# implemented for the MPS device. If you want this op to be added in priority during
-# the prototype phase of this feature, please comment on
-# https://github.com/pytorch/pytorch/issues/77764. As a temporary fix, you can set
-# the environment variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to use the CPU as a fallback
-# for this op. WARNING: this will be slower than running natively on MPS.
+    args = parser.parse_args()
 
-def main(debug = False):
-    print()
+    # Set device
     device = 'cpu'
     if torch.cuda.is_available():
         device = 'cuda'
     # elif torch.backends.mps.is_available():  # some functions not impemented in mps
     #     device = 'mps'
     device = torch.device(device)
+
+    # Display config
+    if args.debug:
+        print()
+        print('DEBUG ENABLED.')
+    print()
     print('Device:', device)
+    print()
+    print('-- Hyperparameters --')
+    print('Embed dimension (d model):', args.d_model)
+    print('Num attention heads:', args.num_heads)
+    print('Num encoder/decoder layers:', args.num_layers if not args.debug else args.num_debug_layers)
+    print('Max sequence length:', args.max_length)
+    print('Dropout probability:', args.dropout)
+    print('Batch size:', args.batch_size)
+    print('Learning rate:', args.learning_rate)
+    print()
 
-    # Model Hyperparameters
-    d_model = 512  # embed_size
-    num_heads = 8
-    dropout = 0.1
-    max_length = 5000
-    num_layers = 6 if not debug else 1
-
-    # Training
-    num_epochs = 8
-    batch_size = 1
+    # Begin training
     optimizer = torch.optim.Adam
-    learning_rate = 0.001
-
-    trainer = Trainer(d_model=d_model,
-                      num_layers=num_layers,
-                      dropout=dropout,
-                      num_heads=num_heads,
-                      max_length=max_length,
+    trainer = Trainer(d_model=args.d_model,
+                      num_layers=args.num_layers,
+                      dropout=args.dropout,
+                      num_heads=args.num_heads,
+                      max_length=args.max_length,
                       device=device,
-                      debug=debug)
-    trainer.train(num_epochs=num_epochs,
-                  batch_size=batch_size,
+                      debug=args.debug)
+    trainer.train(num_epochs=args.num_epochs,
+                  batch_size=args.batch_size,
                   optimizer=optimizer,
-                  learning_rate=learning_rate)
+                  learning_rate=args.learning_rate)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(
-        prog='S2T Trainer',
-        description='Train the S2T transformer neural network',
-        epilog='Epilogue sample text')
-    parser.add_argument('--debug', action='store_true', help='Run through only one training example for debugging')
-    args = parser.parse_args()
-    main(debug=args.debug)
+    main()

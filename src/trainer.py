@@ -90,17 +90,7 @@ class Trainer():
         # return padded_batch, torch.cat(target_batch, dim=0).reshape(len(sample_batch))
 
     def train(self, num_epochs: int, batch_size: int, optimizer, learning_rate):
-        print('Embed dimension (d model):', self.d_model)
-        print('Num attention heads:', self.num_heads)
-        print('Num encoder/decoder layers:', self.num_layers)
-        print('Max sequence length:', self.max_length)
-        print('Dropout probability:', self.dropout)
-        print('Batch size:', batch_size)
-        print('Learning rate:', learning_rate)
-        print()
-
-        num_files = None  # Reduce dataset to subset, None = all
-
+        num_files = 100  # Reduce dataset to subset, None = all
         # Import preprocessed mfcc data
         data = []
         for _, _, files in os.walk('mfcc'):
@@ -144,7 +134,7 @@ class Trainer():
 
         # NOTE: need to fix data shaping of source & target vector distribution
         # criterion = LabelSmoothing(smoothing=0.1)
-        criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+        criterion = nn.CrossEntropyLoss(label_smoothing=0.1).to(self.device)
         
         metrics = Metrics(debug=self.debug)
 
@@ -206,20 +196,16 @@ class Trainer():
 
                     return
 
-                if i % 5 == 0:
+                if i % 10 == 0:
                     elapsed = time.time() - start
                     print(f'Epoch: {epoch+1}/{num_epochs} | Step: {i}/{num_steps} | Loss: {loss.item():.4f} | Elapsed: {elapsed:.1f}s')
                 
-                # Testing on small dataset and large number of epochs
-                # if epoch % 5 == 0 and i == (num_steps - 1):
-                #     print()
-                #     print('Loss inputs:', prediction.shape, target_y.shape)
-                #     print()
-                #     print('Prediction indices:', prediction_indices)
-                #     print('Prediction sequence:', prediction_sequence)
-                #     print('Prediction shape:', prediction_indices.shape)
-                #     print()
-                #     print('Target indices:', target_y)
-                #     print('Target sequence:', transcripts[0])
-                #     print('Target shape:', target_y.shape)
-                #     print()
+                # Show prediction on final step of last epoch
+                if epoch == (num_epochs - 1) and i >= (num_steps - 10):
+                    print()
+                    print('Prediction indices:', prediction_indices)
+                    print('Prediction sequence:', prediction_sequence)
+                    print()
+                    print('Target indices:', target_y)
+                    print('Target sequence:', transcripts[0])
+                    print()

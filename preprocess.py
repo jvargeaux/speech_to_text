@@ -1,8 +1,12 @@
+import argparse
+from enum import Enum
+import multiprocessing as mp
+import os
 import sys
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch import nn
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 import torchaudio
@@ -10,18 +14,6 @@ import librosa, librosa.display
 from pathlib import Path
 import sounddevice as sd
 import h5py
-import os
-import multiprocessing as mp
-import time
-from enum import Enum
-
-
-device = 'cpu'
-if torch.cuda.is_available():
-    device = 'cuda'
-elif torch.backends.mps.is_available():
-    device = 'mps'
-device = torch.device(device)
 
 
 class SPLITS(Enum):
@@ -50,7 +42,7 @@ class ProgressBar():
             print()
 
 
-class SpeechToTextTrainer():
+class Preprocessor():
     '''
     Arguments
     - dataset_url: Name of dataset split, check SPLITS enum for options
@@ -143,31 +135,31 @@ class SpeechToTextTrainer():
             dataset.attrs['sample_rate'] = sample_rate
             dataset.attrs['transcript'] = transcript
 
-    def preprocess(self, multiprocess=False):
+    def preprocess(self):
         if self.data is None:
             print('Data is empty. Aborted.')
             return
+
         mfcc_path = Path('mfcc')
         if not mfcc_path.exists():
             mfcc_path.mkdir(parents=True)
         print('Processing audio data...')
 
-        if multiprocess is True:
-            num_processes = mp.cpu_count() - 1 or 1
-            print('Using number of processes:', num_processes)
-            pool = mp.Pool(processes=num_processes)
-            progress_bar = ProgressBar()
-            for i, _ in enumerate(pool.imap_unordered(self.process_audio, self.data)):
-                progress_bar.update(i + 1, len(self.data))
-        else:
-            print('Using single process.')
-            progress_bar = ProgressBar()
-            for x, item in enumerate(self.data):
-                self.process_audio(item)
-                progress_bar.update(x + 1, len(self.data))
+        # if multiprocess is True:
+        #     num_processes = mp.cpu_count() - 1 or 1
+        #     print('Using number of processes:', num_processes)
+        #     pool = mp.Pool(processes=num_processes)
+        #     progress_bar = ProgressBar()
+        #     for i, _ in enumerate(pool.imap_unordered(self.process_audio, self.data)):
+        #         progress_bar.update(i + 1, len(self.data))
+
+        progress_bar = ProgressBar()
+        for x, item in enumerate(self.data):
+            self.process_audio(item)
+            progress_bar.update(x + 1, len(self.data))
 
     def read_preprocessed_data(self):
-        for root, directories, files in os.walk('mfcc'):
+        for _, _, files in os.walk('mfcc'):
             for file in files:
                 with h5py.File(f'mfcc/{file}', 'r') as file_data:
                     mfccs_dataset = file_data['mfccs']
@@ -192,25 +184,36 @@ class SpeechToTextTrainer():
 
 
 def main():
-    print(f'device: {device}')
-    args = sys.argv[1:]
+    parser = argparse.ArgumentParser(
+        prog='S2T Preprocessor',
+        description='Preprocess audio for the S2T transformer neural network',
+        epilog='Epilogue sample text')
+    
+    default_split = SPLITS.DEV_CLEAN.value
+    parser.add_argument('--split', type=str, nargs='?', default=default_split, help='Name of dataset split to preprocess')
+    parser.add_argument('-d', '--display', action='store_true', help='Display one data sample')
+    parser.add_argument('-w', '--waveform', action='store_true', help='Display waveform')
+    parser.add_argument('-s', '--spectrogram', action='store_true', help='Display spectrogram')
+    parser.add_argument('-m', '--mfcc', action='store_true', help='Display MFCCs')
+    parser.add_argument('-p', '--play', action='store_true', help='Play audio file')
+    parser.add_argument('-r', '--read-mfcc', action='store_true', help='Read preprocessed mfcc data')
 
-    dataset_url = SPLITS.DEV_CLEAN.value
-    print('Dataset split:', dataset_url)
-    trainer = SpeechToTextTrainer(dataset_url=dataset_url)
+    args = parser.parse_args()
+    print(vars(args))
 
-    if '--display' in args:
-        trainer.show_test_data(
-            waveform=True if '--waveform' in args else False,
-            spectrogram=True if '--spectrogram' in args else False,
-            mfcc=True if '--mfcc' in args else False,
-            play=True if '--play' in args else False)
-    if '--preprocess' in args:
-        trainer.preprocess(multiprocess=True if '--multiprocess' in args else False)
-    if '--read-mfcc' in args:
-        trainer.read_preprocessed_data()
-    if '--train' in args:
-        trainer.train()
+    print('Dataset split:', args.split)
+    preprocessor = Preprocessor(dataset_url=args.split)
+
+    if args.display:
+        preprocessor.show_test_data(
+            waveform=True if args.waveform else False,
+            spectrogram=True if args.spectrogram else False,
+            mfcc=True if args.mfcc else False,
+            play=True if args.play else False)
+    elif args.read_mfcc:
+        preprocessor.read_preprocessed_data()
+    else:
+        preprocessor.preprocess()
 
 if __name__ == '__main__':
     main()
