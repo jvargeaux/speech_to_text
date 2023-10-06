@@ -1,5 +1,4 @@
 import argparse
-import os
 import torch
 from torch import nn
 from src.trainer import Trainer
@@ -21,6 +20,7 @@ def main():
     parser.add_argument('num_epochs', type=int, nargs='?', default=config['num_epochs'], help='Number of epochs')
     parser.add_argument('batch_size', type=int, nargs='?', default=config['batch_size'], help='Size of each batch')
     parser.add_argument('learning_rate', type=float, nargs='?', default=config['learning_rate'], help='Base learning rate')
+    parser.add_argument('lr_gamma', type=float, nargs='?', default=config['lr_gamma'], help='Gamma for learning rate scheduler')
     
     parser.add_argument('-d', '--debug', action='store_true',
                         help='Run through only one training example for debugging')
@@ -52,6 +52,7 @@ def main():
     print('Dropout probability:', args.dropout)
     print('Batch size:', args.batch_size)
     print('Learning rate:', args.learning_rate)
+    print('LR gamma:', args.lr_gamma)
     print()
 
     # Begin training
@@ -66,7 +67,8 @@ def main():
     trainer.train(num_epochs=args.num_epochs,
                   batch_size=args.batch_size,
                   optimizer=optimizer,
-                  learning_rate=args.learning_rate)
+                  learning_rate=args.learning_rate,
+                  lr_gamma=args.lr_gamma)
 
 if __name__ == '__main__':
     main()

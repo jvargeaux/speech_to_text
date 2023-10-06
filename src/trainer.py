@@ -1,13 +1,17 @@
-import os
+from datetime import datetime
+from glob import glob
 import h5py
+from pathlib import Path
 import time
 import torch
 from torch import nn, Tensor
+from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 
+from preprocess import Preprocessor, SPLITS
 from src.transformer import Transformer
 from src.metrics import Metrics
 
@@ -89,29 +93,28 @@ class Trainer():
 
         # return padded_batch, torch.cat(target_batch, dim=0).reshape(len(sample_batch))
 
-    def train(self, num_epochs: int, batch_size: int, optimizer, learning_rate):
-        num_files = 100  # Reduce dataset to subset, None = all
+    def train(self, num_epochs: int, batch_size: int, optimizer, learning_rate: float, lr_gamma: float):
+        num_files = 50  # Reduce dataset to subset, None = all
         # Import preprocessed mfcc data
         data = []
-        for _, _, files in os.walk('mfcc'):
-            if num_files is not None:
-                files = files[:num_files]
-            for file in files:
-                with h5py.File(f'mfcc/{file}', 'r') as file_data:
-                    data.append([file_data['mfccs'][:],
-                                file_data['mfccs'].attrs['sample_rate'],
-                                file_data['mfccs'].attrs['transcript'],
-                                file_data['mfccs'].attrs['speaker_id']])
-        print('Files:', len(data))
+        files = glob('mfcc/*.hdf5')
 
-        # sample_input = data[0]
-        # mfccs = torch.tensor(sample_input[0])  # mfccs
-        # transcript = sample_input[2]  # transcript
-        # print(mfccs.shape)
-        # print('Number of audio chunks:', mfccs.shape[0])
-        # print('MFCC dimension:', mfccs.shape[1])
-        # print('Target sequence:', transcript)
-        # print('Target sequence length:', len(transcript.split()))
+        if len(files) == 0:
+            print('No preprocessed MFCC folder detected. Preprocessing now...')
+            preprocessor = Preprocessor(dataset_url=SPLITS.DEV_CLEAN.value)
+            preprocessor.preprocess()
+            files = glob('mfcc/*.hdf5')
+            print()
+
+        if num_files is not None:
+            files = files[:num_files]
+        for file in files:
+            with h5py.File(file, 'r') as file_data:
+                data.append([file_data['mfccs'][:],
+                            file_data['mfccs'].attrs['sample_rate'],
+                            file_data['mfccs'].attrs['transcript'],
+                            file_data['mfccs'].attrs['speaker_id']])
+        print('Files:', len(data))
 
         # Build vocabulary from all transcripts
         transcripts = [item[2] for item in data]
@@ -131,6 +134,7 @@ class Trainer():
                             device=self.device, debug=self.debug).to(self.device)
 
         optimizer = optimizer(self.model.parameters(), lr=learning_rate, betas=(0.9, 0.98), eps=1e-9)
+        scheduler = lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=lr_gamma)
 
         # NOTE: need to fix data shaping of source & target vector distribution
         # criterion = LabelSmoothing(smoothing=0.1)
@@ -138,6 +142,8 @@ class Trainer():
         
         metrics = Metrics(debug=self.debug)
 
+        print('Starting training...')
+        print()
         self.model.train()
         for epoch in range(num_epochs):
             start = time.time()
@@ -156,16 +162,20 @@ class Trainer():
 
                 # Train
                 out = self.model(source_mfccs=source_mfccs, target_sequence=target_sequence)
-                prediction = out[0]  # batch of 1 for now
-                target_y = target_sequence
 
-                pred_x = prediction[:-1]
-                target_y = target_sequence[1:]
+                # Compare against next word in sequence
+                # prediction = out[0][:-1]  # batch of 1
+                # target = target_sequence[1:]
+
+                # Compare against same word in sequence
+                prediction = out[0]  # batch of 1
+                target = target_sequence
 
                 # Calculate loss & perform backprop
-                loss = criterion(pred_x, target_y)
+                loss = criterion(prediction, target)
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
                 optimizer.zero_grad()
 
                 # For showing prediction
@@ -173,22 +183,20 @@ class Trainer():
                 prediction_sequence = vocabulary.get_sequence_from_tensor(prediction_indices)
 
                 if self.debug:
-                    elapsed = time.time() - start
-                    print(f'Epoch: {epoch+1}/{num_epochs} | Step: {i}/{num_steps} | Loss: {loss.item():.4f} | Time: {elapsed:.1f}')
-
                     print()
-                    print('Loss inputs:', prediction.shape, target_y.shape)
+                    print('Out shape:', out.shape)
+                    print('Loss inputs:', prediction.shape, target.shape)
+                    print()
+                    print('Target indices:', target_sequence)
+                    print('Target sequence:', transcripts[0])
+                    print('Target shape:', target_sequence.shape)
                     print()
                     print('Prediction indices:', prediction_indices)
                     print('Prediction sequence:', prediction_sequence)
                     print('Prediction shape:', prediction_indices.shape)
                     print()
-                    print('Target indices:', target_y)
-                    print('Target sequence:', transcripts[0])
-                    print('Target shape:', target_y.shape)
-                    print()
 
-                    # metrics.show_confusion_matrix(target=target_y, predicted=prediction_indices)
+                    # metrics.show_confusion_matrix(target=target, predicted=prediction_indices)
 
                     # prediction_no_grad = prediction.clone().detach().requires_grad_(False)
                     # # prediction_display = F.softmax(prediction_no_grad, dim=-1)
@@ -196,16 +204,26 @@ class Trainer():
 
                     return
 
-                if i % 10 == 0:
+                # Print every x steps
+                if (i + 1) % 50 == 0:
                     elapsed = time.time() - start
-                    print(f'Epoch: {epoch+1}/{num_epochs} | Step: {i}/{num_steps} | Loss: {loss.item():.4f} | Elapsed: {elapsed:.1f}s')
+                    print(f'Epoch: {(epoch+1):>3}/{num_epochs} | Step: {(i+1):>4}/{num_steps} | Loss: {loss.item():.4f} | LR: {scheduler.get_last_lr()[0]:.2e} | Epoch Time: {elapsed:>5.1f}s')
                 
-                # Show prediction on final step of last epoch
-                if epoch == (num_epochs - 1) and i >= (num_steps - 10):
+                # Show prediction at end of training
+                if (epoch + 1) % 20 == 0 and i >= (num_steps - 3):
                     print()
-                    print('Prediction indices:', prediction_indices)
-                    print('Prediction sequence:', prediction_sequence)
+                    print('Transcript:', transcripts[0].lower())
+                    print('Prediction:', ' '.join(prediction_sequence))
                     print()
-                    print('Target indices:', target_y)
-                    print('Target sequence:', transcripts[0])
-                    print()
+        
+        print()
+        print('Training finished.')
+        print()
+
+        # Save model & optimizer
+        save_directory = Path(f'models/{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}')
+        if not Path.exists(save_directory):
+            Path.mkdir(save_directory, parents=True)
+        torch.save(self.model.state_dict(), f'{save_directory}/model.pt')
+        torch.save(optimizer.state_dict(), f'{save_directory}/optimizer.pt')
+

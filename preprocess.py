@@ -54,6 +54,7 @@ class Preprocessor():
         self.n_mfcc = 13  # standard minimum
 
         self.data = None
+        print('Dataset split:', dataset_url)
         self.download_dataset(url=dataset_url)
 
     def download_dataset(self, url: str):
@@ -157,6 +158,7 @@ class Preprocessor():
         for x, item in enumerate(self.data):
             self.process_audio(item)
             progress_bar.update(x + 1, len(self.data))
+        print('Preprocessing finished.')
 
     def read_preprocessed_data(self):
         for _, _, files in os.walk('mfcc'):
@@ -199,9 +201,7 @@ def main():
     parser.add_argument('-r', '--read-mfcc', action='store_true', help='Read preprocessed mfcc data')
 
     args = parser.parse_args()
-    print(vars(args))
 
-    print('Dataset split:', args.split)
     preprocessor = Preprocessor(dataset_url=args.split)
 
     if args.display:
