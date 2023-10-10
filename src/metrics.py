@@ -1,7 +1,8 @@
+import math
 import matplotlib.pyplot as plt
 import seaborn
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-import math
+from torch import Tensor
 
 
 class Metrics():
@@ -20,16 +21,16 @@ class Metrics():
         if ylabel is not None:
             plt.ylabel(ylabel)
         plt.show()
-    
-    def add_heatmap(self, data, xlabel = None, ylabel = None):
+
+    def add_heatmap(self, data: Tensor, xlabel = None, ylabel = None):
         if self.debug is False:
             return
         self.plots.append({
-            'data': data,
+            'data': data.clone().detach().cpu(),
             'xlabel': xlabel,
             'ylabel': ylabel
         })
-    
+
     def show_heatmaps(self):
         if self.debug is False:
             return

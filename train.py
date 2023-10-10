@@ -10,7 +10,7 @@ def main():
         prog='S2T Trainer',
         description='Train the S2T transformer neural network',
         epilog='Epilogue sample text')
-    
+
     # Hyperparameters from args/config
     parser.add_argument('d_model', type=int, nargs='?', default=config['d_model'], help='Size of embedding vector')
     parser.add_argument('num_heads', type=int, nargs='?', default=config['num_heads'], help='Number of attention heads')
@@ -21,11 +21,13 @@ def main():
     parser.add_argument('batch_size', type=int, nargs='?', default=config['batch_size'], help='Size of each batch')
     parser.add_argument('learning_rate', type=float, nargs='?', default=config['learning_rate'], help='Base learning rate')
     parser.add_argument('lr_gamma', type=float, nargs='?', default=config['lr_gamma'], help='Gamma for learning rate scheduler')
-    
+
     parser.add_argument('-d', '--debug', action='store_true',
                         help='Run through only one training example for debugging')
     parser.add_argument('num_debug_layers', type=int, nargs='?', default=config['num_debug_layers'],
                         help='Number of encoder/decoder layers in debug mode')
+    parser.add_argument('num_debug_files', type=int, nargs='?', default=config['num_debug_files'],
+                        help='Use a smaller subset with this number of files in debug mode. None = use all')
 
     args = parser.parse_args()
 
@@ -39,15 +41,18 @@ def main():
 
     # Display config
     if args.debug:
+        args.num_layers = args.num_debug_layers
         print()
         print('DEBUG ENABLED.')
+        if args.num_debug_files is not None:
+            print('Using smaller debug subset.')
     print()
     print('Device:', device)
     print()
     print('-- Hyperparameters --')
     print('Embed dimension (d model):', args.d_model)
     print('Num attention heads:', args.num_heads)
-    print('Num encoder/decoder layers:', args.num_layers if not args.debug else args.num_debug_layers)
+    print('Num encoder/decoder layers:', args.num_layers)
     print('Max sequence length:', args.max_length)
     print('Dropout probability:', args.dropout)
     print('Batch size:', args.batch_size)
@@ -68,7 +73,8 @@ def main():
                   batch_size=args.batch_size,
                   optimizer=optimizer,
                   learning_rate=args.learning_rate,
-                  lr_gamma=args.lr_gamma)
+                  lr_gamma=args.lr_gamma,
+                  num_files=args.num_debug_files if args.debug else None)
 
 if __name__ == '__main__':
     main()

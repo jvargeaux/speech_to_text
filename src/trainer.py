@@ -93,8 +93,8 @@ class Trainer():
 
         # return padded_batch, torch.cat(target_batch, dim=0).reshape(len(sample_batch))
 
-    def train(self, num_epochs: int, batch_size: int, optimizer, learning_rate: float, lr_gamma: float):
-        num_files = 50  # Reduce dataset to subset, None = all
+    def train(self, num_epochs: int, batch_size: int, optimizer, learning_rate: float, lr_gamma: float,
+              num_files: int | None = None):
         # Import preprocessed mfcc data
         data = []
         files = glob('mfcc/*.hdf5')
@@ -122,11 +122,12 @@ class Trainer():
         vocab_size = vocabulary.vocab_size
         print('Model Vocab Size:', vocab_size)
         # all_words = vocab.get_itos()
-        print()
 
         # Prepare training data
         train_loader = DataLoader(dataset=data, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
         num_steps = len(train_loader)
+        print('Number of batches:', num_steps)
+        print()
 
         # Build model
         self.model = Transformer(vocab_size=vocab_size, d_model=self.d_model, dropout=self.dropout,
@@ -136,10 +137,9 @@ class Trainer():
         optimizer = optimizer(self.model.parameters(), lr=learning_rate, betas=(0.9, 0.98), eps=1e-9)
         scheduler = lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=lr_gamma)
 
-        # NOTE: need to fix data shaping of source & target vector distribution
         # criterion = LabelSmoothing(smoothing=0.1)
         criterion = nn.CrossEntropyLoss(label_smoothing=0.1).to(self.device)
-        
+
         metrics = Metrics(debug=self.debug)
 
         print('Starting training...')
@@ -147,32 +147,29 @@ class Trainer():
         self.model.train()
         for epoch in range(num_epochs):
             start = time.time()
-            total_tokens = 0
-            total_loss = 0
-            tokens = 0
-
+            epoch_loss = 0
+            epoch_tokens = 0
             for i, batch in enumerate(train_loader):
-                source_mfccs = [torch.tensor(item[0]).to(self.device) for item in batch]
+                source = torch.stack([torch.tensor(item[0]) for item in batch]).to(self.device)
                 transcripts = [item[2] for item in batch]
-                target_sequences = list(map(vocabulary.get_tensor_from_sequence, transcripts))
+                target_sequences = torch.stack(list(map(vocabulary.get_tensor_from_sequence, transcripts))).to(self.device)
 
-                # For now, take only first in batch
-                source_mfccs = source_mfccs[0]
-                target_sequence = target_sequences[0]
-
-                # Train
-                out = self.model(source_mfccs=source_mfccs, target_sequence=target_sequence)
+                out = self.model(source=source, target_sequences=target_sequences)
 
                 # Compare against next word in sequence
-                # prediction = out[0][:-1]  # batch of 1
+                # prediction = out[:-1]
                 # target = target_sequence[1:]
 
                 # Compare against same word in sequence
-                prediction = out[0]  # batch of 1
-                target = target_sequence
+                # prediction = out
+                # target = target_sequences
+
+                # Flatten batches
+                prediction_flat = out.view(-1, out.shape[-1])
+                target_flat = target_sequences.view(-1)
 
                 # Calculate loss & perform backprop
-                loss = criterion(prediction, target)
+                loss = criterion(prediction_flat, target_flat)
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
@@ -182,14 +179,17 @@ class Trainer():
                 prediction_indices = torch.argmax(out, dim=-1)[0]
                 prediction_sequence = vocabulary.get_sequence_from_tensor(prediction_indices)
 
+                epoch_loss += loss.item()
+                epoch_tokens += len(target_flat)
+
                 if self.debug:
                     print()
                     print('Out shape:', out.shape)
-                    print('Loss inputs:', prediction.shape, target.shape)
+                    print('Loss inputs:', prediction_flat.shape, target_flat.shape)
                     print()
-                    print('Target indices:', target_sequence)
+                    print('Target indices:', target_sequences)
                     print('Target sequence:', transcripts[0])
-                    print('Target shape:', target_sequence.shape)
+                    print('Target shape:', target_sequences.shape)
                     print()
                     print('Prediction indices:', prediction_indices)
                     print('Prediction sequence:', prediction_sequence)
@@ -207,15 +207,17 @@ class Trainer():
                 # Print every x steps
                 if (i + 1) % 50 == 0:
                     elapsed = time.time() - start
-                    print(f'Epoch: {(epoch+1):>3}/{num_epochs} | Step: {(i+1):>4}/{num_steps} | Loss: {loss.item():.4f} | LR: {scheduler.get_last_lr()[0]:.2e} | Epoch Time: {elapsed:>5.1f}s')
-                
+                    avg_loss = epoch_loss / (i + 1)
+                    tokens_per_sec = epoch_tokens / elapsed
+                    print(f'Epoch: {(epoch+1):>3}/{num_epochs} | Step: {(i+1):>4}/{num_steps} | Tokens/sec: {tokens_per_sec:>6.1f} | Avg. Loss: {avg_loss:.4f} | LR: {scheduler.get_last_lr()[0]:.2e} | Epoch Time: {elapsed:>5.1f}s')
+
                 # Show prediction at end of training
                 if (epoch + 1) % 20 == 0 and i >= (num_steps - 3):
                     print()
                     print('Transcript:', transcripts[0].lower())
                     print('Prediction:', ' '.join(prediction_sequence))
                     print()
-        
+
         print()
         print('Training finished.')
         print()

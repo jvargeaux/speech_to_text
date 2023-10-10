@@ -10,5 +10,7 @@ config = {
     'learning_rate': 1e-4,  # 0.0001
     'lr_gamma': 0.998,
 
-    'num_debug_layers': 1
+    # Debug
+    'num_debug_layers': 1,
+    'num_debug_files': 50  # None = all
 }
