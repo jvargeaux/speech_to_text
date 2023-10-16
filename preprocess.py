@@ -188,7 +188,7 @@ def main():
         prog='S2T Preprocessor',
         description='Preprocess audio for the S2T transformer neural network',
         epilog='Epilogue sample text')
-    
+
     default_split = SPLITS.DEV_CLEAN.value
     parser.add_argument('--split', type=str, nargs='?', default=default_split, help='Name of dataset split to preprocess')
     parser.add_argument('-d', '--display', type=int, default=-1, help='Index of one data sample to display')

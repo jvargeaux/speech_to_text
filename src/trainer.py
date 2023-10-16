@@ -6,6 +6,7 @@ import time
 import torch
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 from preprocess import Preprocessor, SPLITS
 from src.transformer import Transformer
@@ -43,13 +44,13 @@ class Trainer():
               num_files: int | None = None):
         # Import preprocessed mfcc data
         data = []
-        files = Path.glob('mfcc/*.hdf5')
+        files = list(Path('.').glob('mfcc/*.hdf5'))
 
         if len(files) == 0:
             print('No preprocessed MFCC folder detected. Preprocessing now...')
             preprocessor = Preprocessor(dataset_url=SPLITS.DEV_CLEAN.value)
             preprocessor.preprocess()
-            files = Path.glob('mfcc/*.hdf5')
+            files = list(Path('.').glob('mfcc/*.hdf5'))
             print()
 
         if num_files is not None:
@@ -84,6 +85,11 @@ class Trainer():
         scheduler = lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=lr_gamma)
         criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1).to(self.device)
         metrics = Metrics(debug=self.debug)
+
+        summary_path = Path(f'runs/{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}')
+        if not Path.exists(summary_path):
+            Path.mkdir(summary_path, parents=True)
+        summary_writer = SummaryWriter(summary_path)
 
         print('Starting training...')
         print()
@@ -152,6 +158,8 @@ class Trainer():
                     elapsed = time.time() - start
                     avg_loss = epoch_loss / (i + 1)
                     tokens_per_sec = epoch_tokens / elapsed
+                    summary_writer.add_scalar('Loss (CE)', avg_loss, global_step=epoch * num_steps + i + 1)
+                    summary_writer.add_scalar('LR', scheduler.get_last_lr()[0], global_step=epoch * num_steps + i)
                     print(f'Epoch: {(epoch+1):>3}/{num_epochs} | Step: {(i+1):>4}/{num_steps} | Tokens/sec: {tokens_per_sec:>6.1f} | Avg. Loss: {avg_loss:.4f} | LR: {scheduler.get_last_lr()[0]:.2e} | Epoch Time: {elapsed:>5.1f}s')
 
                 # Show prediction at end of training

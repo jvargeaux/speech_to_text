@@ -29,7 +29,7 @@ def main():
         hop_length = 512  # number of samples to shift
         n_fft = 2048  # number of samples per fft (window size)
         n_mfcc = 13  # standard minimum
-        
+
         # Preprocess audio
         samples, sr = sf.read(input_audio_path)
         mfccs = librosa.feature.mfcc(y=samples, n_fft=n_fft, hop_length=hop_length, n_mfcc=n_mfcc)
@@ -49,7 +49,7 @@ def main():
     model = Transformer(vocab_size=vocab_size, d_model=d_model, dropout=dropout,
                         num_heads=num_heads, max_length=max_length, num_layers=num_layers,
                         device=device).to(device)
-    
+
     state_dict = torch.load(f'{model_path}/model.pt')
     model.load_state_dict(state_dict)
 
