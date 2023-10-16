@@ -26,8 +26,8 @@ def main():
                         help='Run through only one training example for debugging')
     parser.add_argument('num_debug_layers', type=int, nargs='?', default=config['num_debug_layers'],
                         help='Number of encoder/decoder layers in debug mode')
-    parser.add_argument('num_debug_files', type=int, nargs='?', default=config['num_debug_files'],
-                        help='Use a smaller subset with this number of files in debug mode. None = use all')
+    parser.add_argument('subset_size', type=int, nargs='?', default=config['subset_size'],
+                        help='Use a smaller subset with this number of files. None = use all')
 
     args = parser.parse_args()
 
@@ -44,7 +44,7 @@ def main():
         args.num_layers = args.num_debug_layers
         print()
         print('DEBUG ENABLED.')
-        if args.num_debug_files is not None:
+        if args.subset_size is not None:
             print('Using smaller debug subset.')
     print()
     print('Device:', device)
@@ -74,7 +74,7 @@ def main():
                   optimizer=optimizer,
                   learning_rate=args.learning_rate,
                   lr_gamma=args.lr_gamma,
-                  num_files=args.num_debug_files if args.debug else None)
+                  num_files=args.subset_size)
 
 if __name__ == '__main__':
     main()

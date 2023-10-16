@@ -5,3 +5,5 @@
 .venv
 data
 mfcc
+models
+test.wav

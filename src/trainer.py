@@ -1,70 +1,16 @@
 from datetime import datetime
-from glob import glob
+# from glob import glob
 import h5py
 from pathlib import Path
 import time
 import torch
-from torch import nn, Tensor
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
-import torch.nn.functional as F
-from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import build_vocab_from_iterator
 
 from preprocess import Preprocessor, SPLITS
 from src.transformer import Transformer
+from src.vocabulary import Vocabulary
 from src.metrics import Metrics
-
-
-class Vocabulary():
-    def __init__(self, batch, device):
-        # Go through all batches of data, and expand the vocabulary
-        self.device = device
-        self.tokenizer = get_tokenizer('basic_english')
-        self.vocab = None
-        self.vocab_size = 0
-        if batch is not None:
-            self.init_vocab(batch)
-
-    def init_vocab(self, batch):
-        self.vocab = build_vocab_from_iterator(map(self.tokenizer, batch), specials=['<unk>'])
-        # Index of 0 = <unk> (unfamiliar word)
-        self.vocab.set_default_index(self.vocab['<unk>'])
-        self.vocab_size = len(self.vocab)
-
-    def get_tensor_from_sequence(self, source_sequence: str):
-        # Convert tokens -> vocab indices -> tensor
-        return torch.tensor(self.vocab(self.tokenizer(source_sequence)), dtype=torch.long).to(self.device)
-
-    def get_sequence_from_tensor(self, indices: Tensor):
-        return self.vocab.lookup_tokens(indices=list(indices))
-        # return self.vocab.lookup_token(index)
-
-
-class LabelSmoothing(nn.Module):
-    def __init__(self, smoothing: float = 0.0):
-        super().__init__()
-        self.criterion = nn.KLDivLoss(reduction='sum')  # size_average=False will be deprecated
-        self.smoothing = smoothing
-        self.confidence = 1.0 - smoothing
-        self.true_dist = None
-
-    def forward(self, x: Tensor, target_sequence: Tensor):
-        '''
-        x: Model output, shape (batch_size, sequence_length, vocab_size)
-        '''
-        print('x shape:', x.shape)
-        true_dist = x.data.clone()[0]
-        size = x.size(-1)
-        true_dist.fill_(self.smoothing / (size - 2))
-        true_dist.scatter_(1, target_sequence.data.unsqueeze(1), self.confidence)
-        true_dist[:, 0] = 0
-        mask = torch.nonzero(target_sequence.data == 0)
-        if mask.dim() > 0:
-            true_dist.index_fill_(0, mask.squeeze(), 0.0)
-        self.true_dist = true_dist
-        # print('True dist:', true_dist)
-        return self.criterion(x, true_dist)
 
 
 class Trainer():
@@ -97,13 +43,13 @@ class Trainer():
               num_files: int | None = None):
         # Import preprocessed mfcc data
         data = []
-        files = glob('mfcc/*.hdf5')
+        files = Path.glob('mfcc/*.hdf5')
 
         if len(files) == 0:
             print('No preprocessed MFCC folder detected. Preprocessing now...')
             preprocessor = Preprocessor(dataset_url=SPLITS.DEV_CLEAN.value)
             preprocessor.preprocess()
-            files = glob('mfcc/*.hdf5')
+            files = Path.glob('mfcc/*.hdf5')
             print()
 
         if num_files is not None:
@@ -136,10 +82,7 @@ class Trainer():
 
         optimizer = optimizer(self.model.parameters(), lr=learning_rate, betas=(0.9, 0.98), eps=1e-9)
         scheduler = lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=lr_gamma)
-
-        # criterion = LabelSmoothing(smoothing=0.1)
-        criterion = nn.CrossEntropyLoss(label_smoothing=0.1).to(self.device)
-
+        criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1).to(self.device)
         metrics = Metrics(debug=self.debug)
 
         print('Starting training...')
@@ -205,7 +148,7 @@ class Trainer():
                     return
 
                 # Print every x steps
-                if (i + 1) % 50 == 0:
+                if (i + 1) % 10 == 0:
                     elapsed = time.time() - start
                     avg_loss = epoch_loss / (i + 1)
                     tokens_per_sec = epoch_tokens / elapsed
@@ -228,4 +171,4 @@ class Trainer():
             Path.mkdir(save_directory, parents=True)
         torch.save(self.model.state_dict(), f'{save_directory}/model.pt')
         torch.save(optimizer.state_dict(), f'{save_directory}/optimizer.pt')
-
+        torch.save(vocabulary.vocab, f'{save_directory}/vocabulary.pt')

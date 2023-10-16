@@ -2,11 +2,9 @@ import argparse
 from enum import Enum
 import multiprocessing as mp
 import os
-import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 import torchaudio
@@ -68,10 +66,10 @@ class Preprocessor():
         data = torchaudio.datasets.LIBRISPEECH(root=data_path, url=url, download=True)
         self.data = data
 
-    def show_test_data(self, waveform=False, spectrogram=False, mfcc=False, play=False):
+    def show_test_data(self, index:int=0, waveform=False, spectrogram=False, mfcc=False, play=False):
         if self.data is None:
             return
-        test = self.data.__getitem__(0)
+        test = self.data.__getitem__(index)
         samples, sample_rate, transcript, speaker_id, chapter_id, utterance_id = test
         samples = samples.numpy()
 
@@ -193,7 +191,7 @@ def main():
     
     default_split = SPLITS.DEV_CLEAN.value
     parser.add_argument('--split', type=str, nargs='?', default=default_split, help='Name of dataset split to preprocess')
-    parser.add_argument('-d', '--display', action='store_true', help='Display one data sample')
+    parser.add_argument('-d', '--display', type=int, default=-1, help='Index of one data sample to display')
     parser.add_argument('-w', '--waveform', action='store_true', help='Display waveform')
     parser.add_argument('-s', '--spectrogram', action='store_true', help='Display spectrogram')
     parser.add_argument('-m', '--mfcc', action='store_true', help='Display MFCCs')
@@ -204,8 +202,9 @@ def main():
 
     preprocessor = Preprocessor(dataset_url=args.split)
 
-    if args.display:
+    if args.display != -1:
         preprocessor.show_test_data(
+            index=args.display,
             waveform=True if args.waveform else False,
             spectrogram=True if args.spectrogram else False,
             mfcc=True if args.mfcc else False,

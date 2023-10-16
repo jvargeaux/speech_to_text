@@ -69,7 +69,7 @@ class AudioEmbedder(nn.Module):
         remainder = source.shape[1] % dim_ratio
         pad_amount = dim_ratio - remainder if remainder != 0 else 0
         padded = pad(input=source, pad=(0, 0, 0, pad_amount))
-        reshaped = padded.view(source.shape[0], -1, source.shape[2] * dim_ratio).contiguous()
+        reshaped = padded.reshape(source.shape[0], -1, source.shape[2] * dim_ratio).contiguous()
         return reshaped
 
     def forward(self, source: Tensor, target_length: int):
@@ -496,6 +496,8 @@ class Transformer(nn.Module):
         Source (mfccs) shape: (batch_size, num_chunks, mfcc_length)
         Target (indices) shape: (batch_size, sequence_length)
         '''
+        log('[Transformer] Source shape:', source.shape, source.dtype)
+        log('[Transformer] Target shape:', target_sequences.shape, target_sequences.dtype)
         metrics = Metrics(debug=self.debug)
 
         # NOTE: Need to implement batching for audio embedder, word embedder, and positional encoding
@@ -503,6 +505,7 @@ class Transformer(nn.Module):
         metrics.add_heatmap(data=source[0], ylabel='Source MFCCs')
         source = self.audio_embedder(source=source, target_length=target_sequences.shape[-1])
         log('[Transformer] Source shape:', source.shape)
+        log('[Transformer] Target shape:', target_sequences.shape)
         log('[Transformer] Audio Embedding Output:', source.shape)
         log('[Transformer] Size of word embedding matrix:', self.word_embeddings.embeddings_lut)
         log('[Transformer] Size of positional encoding matrix:', self.positional_encoding.get_buffer('positional_encoding').shape)
