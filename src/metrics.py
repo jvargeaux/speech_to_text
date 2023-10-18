@@ -10,9 +10,7 @@ class Metrics():
         self.plots = []
         self.debug = debug
 
-    def show_confusion_matrix(self, target, predicted, xlabel = None, ylabel = None):
-        if self.debug is False:
-            return
+    def draw_confusion_matrix(self, target, predicted, xlabel = None, ylabel = None):
         cm = confusion_matrix(target, predicted)
         display = ConfusionMatrixDisplay(confusion_matrix=cm)
         display.plot()
@@ -20,20 +18,15 @@ class Metrics():
             plt.xlabel(xlabel)
         if ylabel is not None:
             plt.ylabel(ylabel)
-        plt.show()
 
     def add_heatmap(self, data: Tensor, xlabel = None, ylabel = None):
-        if self.debug is False:
-            return
         self.plots.append({
             'data': data.clone().detach().cpu(),
             'xlabel': xlabel,
             'ylabel': ylabel
         })
 
-    def show_heatmaps(self):
-        if self.debug is False:
-            return
+    def draw_heatmaps(self):
         num_cols = math.ceil(math.sqrt(len(self.plots)))
         num_rows = math.ceil(len(self.plots) / num_cols)
         # At least 2x2 grid
@@ -56,12 +49,9 @@ class Metrics():
             if (col >= num_cols):
                 col = 0
                 row += 1
-
-        plt.show()
+        return fig
 
     def show_heatmap(self, data, xlabel = None, ylabel = None):
-        if self.debug is False:
-            return
         data_clone = data.clone().detach().requires_grad_(False)
         seaborn.heatmap(data=data_clone)
         if xlabel is not None:

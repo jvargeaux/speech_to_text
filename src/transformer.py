@@ -5,8 +5,6 @@ from torch import nn, Tensor
 from torch.nn.functional import pad, softmax, log_softmax
 from typing import Optional
 
-from src.metrics import Metrics
-
 
 class Logger():
     def __init__(self, debug=True):
@@ -17,7 +15,6 @@ class Logger():
             print(*args)
 
 log = Logger(debug=False)
-metrics = Metrics(debug=False)
 
 
 class AudioEmbedder(nn.Module):
@@ -73,43 +70,22 @@ class AudioEmbedder(nn.Module):
         return reshaped
 
     def forward(self, source: Tensor, target_length: int):
-        log('[Audio Embedder] Source shape:', source.shape)
-        log('[Audio Embedder] Target sequence length:', target_length)
-        log('[Audio Embedder] Embed dimension:', self.embed_dim)
         N = source.shape[0]
-
-        # metrics.add_heatmap(data=source[0])
 
         square = self.make_square(source)
 
-        # metrics.add_heatmap(data=square[0])
-
         out = square.unsqueeze(0)  # Add 1 dimension for conv input channel
-        log('[Audio Embedder] after unsqueeze:', out.shape)
         out = self.conv(out)  # Shape: (conv_channels, N, dim_1, dim_2)
-        log('[Audio Embedder] after conv:', out.shape)
         normalize = nn.LayerNorm(out.shape[-1], device=self.device)
         out = normalize(out)
-        log('[Audio Embedder] after norm:', out.shape)
         out = out.view(N, -1, out.shape[-1]).contiguous()  # (N, conv_channels*dim_1, dim_2)
-        log('[Audio Embedder] after reshape:', out.shape)
-
-        # metrics.add_heatmap(data=out[0])
 
         linear1 = nn.Linear(in_features=out.shape[-1], out_features=target_length, device=self.device)  # dim_2 -> target_length
         out = linear1(out)  # (N, conv_channels*dim_1, target_length)
-        log('[Audio Embedder] lin1:', out.shape)
-
-        # metrics.add_heatmap(data=out[0])
 
         out = out.transpose(-1, -2).contiguous()  # (target_length, conv_channels*dim_1)
-        log('[Audio Embedder] flip:', out.shape)
         linear2 = nn.Linear(in_features=out.shape[-1], out_features=self.embed_dim, device=self.device)  # conv_channels*dim_1 -> embed_dim
         out = linear2(out)  # (N, target_length, embed_dim)
-        log('[Audio Embedder] lin2:', out.shape)
-
-        # metrics.add_heatmap(data=out[0])
-        log('[Audio Embedder] out shape:', out.shape)
 
         return out
 
@@ -165,7 +141,6 @@ class WordEmbedder(nn.Module):
         self.norm = nn.LayerNorm(d_model)
 
     def forward(self, x: Tensor):
-        log('[Embedding] x:', x.shape)
         # Average out the magnitude of the vectors by multiplying by the square root of the dimensions
         # Ex: [2, 2, 2] (d = 3)
         # Magnitude: sqrt(2^2 + 2^2 + 2^2) = sqrt(3 * 2^2) = sqrt(3) * 2 = sqrt(d) * 2
@@ -226,7 +201,6 @@ class PositionalEncoding(nn.Module):
         Parameters:
         - x: Tensor, shape `[sequence_length, embed_dim]`
         '''
-        log('[Positional Encoding]', x.shape)
         x = x + self.positional_encoding[:x.size(1)]  # cut to sequence_length (1), not batch_size (0)
         return self.dropout(x)
 
@@ -249,7 +223,6 @@ class MultiheadAttention(nn.Module):
         # Compute "Scaled Dot Product Attention"
         d_k = query.size(-1)
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
-        log('[Multihead Attention] Scores (attention) shape:', scores.shape)
         if mask is not None:
             scores = scores.masked_fill(mask==0, -1e9)
         prob = softmax(scores, dim=-1)
@@ -259,14 +232,9 @@ class MultiheadAttention(nn.Module):
 
     def forward(self, query, key, value, mask = None):
         N = query.shape[0]  # batch size
-        log('[Multihead Attention] Shape of Q/K/V:', value.shape)
-        log('[Multihead Attention] Num heads:', self.num_heads)
-        log('[Multihead Attention] Head dimension:', self.head_dim)
-        log('[Multihead Attention] Batch size:', N)
 
         if mask is not None:
             mask = mask.unsqueeze(1)
-            log('[Multihead Attention] Mask shape:', mask.shape)
 
         # Linear projections
         value = self.linear(value)
@@ -281,18 +249,15 @@ class MultiheadAttention(nn.Module):
         value = value.view(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
         key = key.view(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
         query = query.view(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        log('[Multihead Attention] Shape of sliced Q/K/V:', value.shape)
 
         # 2) Apply attention on all projected vectors
         x, self.attention = self._attention(query, key, value, mask=mask, dropout=self.dropout)
-        log('[Multihead Attention] Shape of attention output:', x.shape, self.attention.shape)
 
         # 3) Concat (flatten last 2 dimensions)
         # Essentially, undo the reshape we did earlier
         # Final shape: (batch_size, )
         out = x.transpose(0, 1).contiguous().view(N, -1, self.num_heads * self.head_dim)
         out = self.linear(out)
-        log('[Multihead Attention] Shape of concat (flattened) attention:', out.shape)
         return out
 
 
@@ -344,14 +309,11 @@ class Encoder(nn.Module):
         Pass the inputs (and mask) through the layers in turn.
         '''
         out = x
-        log('[Encoder] Input shape:', out.shape)
         for n in range(self.num_layers):
-            log('[Encoder]', 'Layer', n+1)
             attention = self.attention(out, out, out, mask)
             out = self.dropout(self.norm1(attention + out))
             forward = self.feed_forward(out)
             out = self.dropout(self.norm2(forward + out))
-        log('[Encoder] Output shape:', out.shape)
         return out
 
 
@@ -415,16 +377,14 @@ class Decoder(nn.Module):
         Pass the inputs (and mask) through the layers in turn.
         '''
         out = x
-        log('[Decoder] Input shape:', out.shape)
         for n in range(self.num_layers):
             log('[Decoder]', 'Layer', n+1)
-            attention = self.attention(out, out, out, target_mask)
-            out = self.dropout(self.norm1(attention + out))
-            attention = self.attention(out, encoder_out, encoder_out, source_mask)
-            out = self.dropout(self.norm2(attention + out))
+            self_attention = self.attention(out, out, out, target_mask)
+            out = self.dropout(self.norm1(self_attention + out))
+            cross_attention = self.attention(out, encoder_out, encoder_out, source_mask)
+            out = self.dropout(self.norm2(cross_attention + out))
             forward = self.feed_forward(out)
             out = self.dropout(self.norm3(forward + out))
-        log('[Decoder] Output shape:', out.shape)
         return out
 
 
@@ -455,20 +415,12 @@ class Transformer(nn.Module):
         self.decoder = Decoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
         self.linear = nn.Linear(d_model, vocab_size)
 
-        if debug:
-            global log
-            global metrics
-            log = Logger(debug=debug)
-            metrics = Metrics(debug=debug)
-
     def make_mask(self, source: Tensor):
         # Encoder output shape: (batch_size, sequence_length, d_model)
-        log('[Mask] Encoder output (source) shape:', source.shape)
         N, target_length, _ = source.shape
 
         attention_shape = (1, target_length, target_length)  # (1, sequence_length, sequence_length)
         mask = torch.tril(torch.ones(attention_shape)).to(self.device)
-        log('[Mask] Attention mask shape:', mask.shape)
         # Final mask shape at multihead attention will be: (batch_size, 1, sequence_length, sequence_length)
 
         # Calculate tokens?
@@ -491,55 +443,29 @@ class Transformer(nn.Module):
 
         return mask
 
-    def forward(self, source: Tensor, target_sequences: Tensor):
+    def forward(self, encoder_source: Tensor, decoder_source: Tensor):
         '''
         Source (mfccs) shape: (batch_size, num_chunks, mfcc_length)
         Target (indices) shape: (batch_size, sequence_length)
         '''
-        log('[Transformer] Source shape:', source.shape, source.dtype)
-        log('[Transformer] Target shape:', target_sequences.shape, target_sequences.dtype)
-        metrics = Metrics(debug=self.debug)
-
-        # NOTE: Need to implement batching for audio embedder, word embedder, and positional encoding
-
-        metrics.add_heatmap(data=source[0], ylabel='Source MFCCs')
-        source = self.audio_embedder(source=source, target_length=target_sequences.shape[-1])
-        log('[Transformer] Source shape:', source.shape)
-        log('[Transformer] Target shape:', target_sequences.shape)
-        log('[Transformer] Audio Embedding Output:', source.shape)
-        log('[Transformer] Size of word embedding matrix:', self.word_embeddings.embeddings_lut)
-        log('[Transformer] Size of positional encoding matrix:', self.positional_encoding.get_buffer('positional_encoding').shape)
+        embedded_source = self.audio_embedder(source=encoder_source, target_length=decoder_source.shape[-1])
 
         # Encoder
-        metrics.add_heatmap(data=source[0], ylabel='Source audio embedding')
-        source = self.positional_encoding(source)
-        metrics.add_heatmap(data=source[0], ylabel='Source pos encoding')
-        log('[Transformer] Source shape after positional encoding:', source.shape)
-        encoder_out = self.encoder(x=source, mask=None)
-        log('[Transformer] Shape of encoder output:', encoder_out.shape)
-        metrics.add_heatmap(data=encoder_out[0], ylabel='Encoder out')
+        pos_encoded_source = self.positional_encoding(embedded_source)
+        encoder_out = self.encoder(x=pos_encoded_source, mask=None)
 
-        # target_mask = self.make_mask(source=encoder_out)
-        # log('[Transformer] Target mask shape:', target_mask.shape)
+        # source_mask = self.make_mask(source=encoder_out)
 
         # Decoder
-        target = self.word_embeddings(target_sequences)
-        log('[Transformer] Target shape after word embeddeding:', target.shape)
-        metrics.add_heatmap(data=target[0], ylabel='Target word embedding')
-        target = self.positional_encoding(target)
-        log('[Transformer] Target shape after positional encoding:', target.shape)
-        metrics.add_heatmap(data=target[0], ylabel='Target pos encoding')
+        embedded_target = self.word_embeddings(decoder_source)
+        pos_encoded_target = self.positional_encoding(embedded_target)
 
-        target_mask = self.make_mask(source=target)
-        log('[Transformer] Target mask shape:', target_mask.shape)
-        metrics.add_heatmap(data=target_mask[0], ylabel='Target mask')
+        target_mask = self.make_mask(source=pos_encoded_target)
 
-        decoder_out = self.decoder(x=target, encoder_out=encoder_out, source_mask=None, target_mask=target_mask)
-        log('[Transformer] Shape of decoder output:', decoder_out.shape)
-        metrics.add_heatmap(data=decoder_out[0], ylabel='Decoder out')
+        decoder_out = self.decoder(x=pos_encoded_target, encoder_out=encoder_out, source_mask=None, target_mask=target_mask)
 
         # out = log_softmax(self.linear(decoder_out), dim=-1)
         out = self.linear(decoder_out)  # Trying no softmax
-        metrics.add_heatmap(data=out[0], ylabel='Out')
-        metrics.show_heatmaps()
-        return out
+
+        return (out, embedded_source, pos_encoded_source, encoder_out,
+                embedded_target, pos_encoded_target, target_mask, decoder_out)

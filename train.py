@@ -12,21 +12,21 @@ def main():
         epilog='Epilogue sample text')
 
     # Hyperparameters from args/config
-    parser.add_argument('d_model', type=int, nargs='?', default=config['d_model'], help='Size of embedding vector')
-    parser.add_argument('num_heads', type=int, nargs='?', default=config['num_heads'], help='Number of attention heads')
-    parser.add_argument('dropout', type=float, nargs='?', default=config['dropout'], help='Dropout probability')
-    parser.add_argument('max_length', type=int, nargs='?', default=config['max_length'], help='Max sequence length')
-    parser.add_argument('num_layers', type=int, nargs='?', default=config['num_layers'], help='Number of encoder/decoder layers')
-    parser.add_argument('num_epochs', type=int, nargs='?', default=config['num_epochs'], help='Number of epochs')
-    parser.add_argument('batch_size', type=int, nargs='?', default=config['batch_size'], help='Size of each batch')
-    parser.add_argument('learning_rate', type=float, nargs='?', default=config['learning_rate'], help='Base learning rate')
-    parser.add_argument('lr_gamma', type=float, nargs='?', default=config['lr_gamma'], help='Gamma for learning rate scheduler')
+    parser.add_argument('--d_model', '-dm', type=int, nargs='?', default=config['d_model'], help='Size of embedding vector')
+    parser.add_argument('--num_heads', '-nh', type=int, nargs='?', default=config['num_heads'], help='Number of attention heads')
+    parser.add_argument('--dropout', '-d', type=float, nargs='?', default=config['dropout'], help='Dropout probability')
+    parser.add_argument('--max_length', '-m', type=int, nargs='?', default=config['max_length'], help='Max sequence length')
+    parser.add_argument('--num_layers', '-nl', type=int, nargs='?', default=config['num_layers'], help='Number of encoder/decoder layers')
+    parser.add_argument('--num_epochs', '-ne', type=int, nargs='?', default=config['num_epochs'], help='Number of epochs')
+    parser.add_argument('--batch_size', '-b', type=int, nargs='?', default=config['batch_size'], help='Size of each batch')
+    parser.add_argument('--learning_rate', '-lr', type=float, nargs='?', default=config['learning_rate'], help='Base learning rate')
+    parser.add_argument('--lr_gamma', '-lg', type=float, nargs='?', default=config['lr_gamma'], help='Gamma for learning rate scheduler')
 
-    parser.add_argument('-d', '--debug', action='store_true',
+    parser.add_argument('--debug', action='store_true',
                         help='Run through only one training example for debugging')
-    parser.add_argument('num_debug_layers', type=int, nargs='?', default=config['num_debug_layers'],
+    parser.add_argument('--num_debug_layers', '-nd', type=int, nargs='?', default=config['num_debug_layers'],
                         help='Number of encoder/decoder layers in debug mode')
-    parser.add_argument('subset_size', type=int, nargs='?', default=config['subset_size'],
+    parser.add_argument('--subset_size', '-s', type=int, nargs='?', default=config['subset_size'],
                         help='Use a smaller subset with this number of files. None = use all')
 
     args = parser.parse_args()

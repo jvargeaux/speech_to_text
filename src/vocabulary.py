@@ -9,6 +9,10 @@ class Vocabulary():
         # Go through all batches of data, and expand the vocabulary
         self.device = device
         self.tokenizer = get_tokenizer('basic_english')
+        self.sos_token = '<sos>'
+        self.eos_token = '<eos>'
+        self.pad_token = '<pad>'
+        self.unk_token = '<unk>'
         self.vocab = None
         self.vocab_size = 0
         if batch is not None:
@@ -17,18 +21,23 @@ class Vocabulary():
             self.load_vocab(vocab)
 
     def init_vocab(self, batch):
-        self.vocab = build_vocab_from_iterator(map(self.tokenizer, batch), specials=['<unk>'])
-        # Index of 0 = <unk> (unfamiliar word)
-        self.vocab.set_default_index(self.vocab['<unk>'])
+        self.vocab = build_vocab_from_iterator(map(self.tokenizer, batch),
+                                               specials=[self.unk_token, self.sos_token, self.eos_token, self.pad_token])
+        self.vocab.set_default_index(self.vocab[self.unk_token])
         self.vocab_size = len(self.vocab)
 
     def load_vocab(self, vocab: Vocab):
         self.vocab = vocab
-        self.vocab.set_default_index(self.vocab['<unk>'])
         self.vocab_size = len(self.vocab)
+    
+    def tokenize_sequence(self, sequence: str):
+        return [self.sos_token] + self.tokenizer(sequence) + [self.eos_token]
+    
+    def build_tokenized_target(self, source_sequence: str):
+        tokenized = self.tokenize_sequence(source_sequence)
+        return torch.tensor(self.vocab(tokenized), dtype=torch.long).to(self.device)
 
     def get_tensor_from_sequence(self, source_sequence: str):
-        # Convert tokens -> vocab indices -> tensor
         return torch.tensor(self.vocab(self.tokenizer(source_sequence)), dtype=torch.long).to(self.device)
 
     def get_sequence_from_tensor(self, indices: Tensor):
