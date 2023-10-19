@@ -35,10 +35,10 @@ class Vocabulary():
     
     def build_tokenized_target(self, source_sequence: str):
         tokenized = self.tokenize_sequence(source_sequence)
-        return torch.tensor(self.vocab(tokenized), dtype=torch.long).to(self.device)
+        return torch.tensor(self.vocab(tokenized), dtype=torch.long, device=self.device)
 
     def get_tensor_from_sequence(self, source_sequence: str):
-        return torch.tensor(self.vocab(self.tokenizer(source_sequence)), dtype=torch.long).to(self.device)
+        return torch.tensor(self.vocab(self.tokenizer(source_sequence)), dtype=torch.long, device=self.device)
 
     def get_sequence_from_tensor(self, indices: Tensor):
         return self.vocab.lookup_tokens(indices=list(indices))

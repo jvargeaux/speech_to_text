@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--batch_size', '-b', type=int, nargs='?', default=config['batch_size'], help='Size of each batch')
     parser.add_argument('--learning_rate', '-lr', type=float, nargs='?', default=config['learning_rate'], help='Base learning rate')
     parser.add_argument('--lr_gamma', '-lg', type=float, nargs='?', default=config['lr_gamma'], help='Gamma for learning rate scheduler')
+    parser.add_argument('--num_warmup_steps', '-nw', type=int, nargs='?', default=config['num_warmup_steps'], help='Number of warmup steps in LR scheduler')
 
     parser.add_argument('--debug', action='store_true',
                         help='Run through only one training example for debugging')
@@ -58,6 +59,7 @@ def main():
     print('Batch size:', args.batch_size)
     print('Learning rate:', args.learning_rate)
     print('LR gamma:', args.lr_gamma)
+    print('Num warmup steps:', args.num_warmup_steps)
     print()
 
     # Begin training
@@ -74,6 +76,7 @@ def main():
                   optimizer=optimizer,
                   learning_rate=args.learning_rate,
                   lr_gamma=args.lr_gamma,
+                  num_warmup_steps=args.num_warmup_steps,
                   num_files=args.subset_size)
 
 if __name__ == '__main__':
