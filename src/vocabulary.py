@@ -29,10 +29,10 @@ class Vocabulary():
     def load_vocab(self, vocab: Vocab):
         self.vocab = vocab
         self.vocab_size = len(self.vocab)
-    
+
     def tokenize_sequence(self, sequence: str):
         return [self.sos_token] + self.tokenizer(sequence) + [self.eos_token]
-    
+
     def build_tokenized_target(self, source_sequence: str):
         tokenized = self.tokenize_sequence(source_sequence)
         return torch.tensor(self.vocab(tokenized), dtype=torch.long, device=self.device)

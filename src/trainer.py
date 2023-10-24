@@ -17,31 +17,94 @@ from src.metrics import Metrics
 
 
 class Trainer():
-    def __init__(self, d_model: int, num_layers: int, dropout: float, num_heads: int,
-                 max_length: int, device, debug = False):
-        self.device = device
+    def __init__(self,
+                 d_model: int,
+                 num_layers: int,
+                 batch_size: int,
+                 dropout: float,
+                 num_heads: int,
+                 max_length: int,
+                 num_epochs: int,
+                 lr: float,
+                 lr_gamma: float,
+                 num_warmup_steps: int | None,
+                 output_lines_per_epoch: int,
+                 checkpoint_after_epoch: int | None,
+                 checkpoint_path: Path | None,
+                 reset_optimizer: bool,
+                 cooldown: int | None,
+                 subset: int | None=None,
+                 device: str='cpu',
+                 debug=False):
+        # Model
         self.d_model = d_model
         self.num_layers = num_layers
         self.dropout = dropout
         self.num_heads = num_heads
         self.max_length = max_length
+
+        # Training
+        self.device = device
         self.debug = debug
+        self.run_path = Path(f'runs/{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}')
+        self.num_epochs = num_epochs
+        self.batch_size = batch_size
+        self.lr = lr
+        self.lr_gamma = lr_gamma
+        self.num_warmup_steps = num_warmup_steps
+        self.cooldown = cooldown
+        self.output_lines_per_epoch = output_lines_per_epoch
+        self.checkpoint_after_epoch = checkpoint_after_epoch
+        self.checkpoint_path = checkpoint_path
+        self.reset_optimizer = reset_optimizer
+        self.subset = subset
+
+        self.data = []
         self.vocabulary = None
+        self.model = None
+        self.optimizer = None
+
+    def import_data(self):
+        data = []
+        files = list(Path('.').glob('mfcc/*.hdf5'))
+        if len(files) == 0:
+            print('No preprocessed MFCC folder detected. Preprocessing now...')
+            preprocessor = Preprocessor(dataset_url=SPLITS.DEV_CLEAN.value)
+            preprocessor.preprocess()
+            files = list(Path('.').glob('mfcc/*.hdf5'))
+            print()
+        if self.subset is not None:
+            files = files[:self.subset]
+        for file in files:
+            with h5py.File(file, 'r') as file_data:
+                data.append([file_data['mfccs'][:],
+                            file_data['mfccs'].attrs['sample_rate'],
+                            file_data['mfccs'].attrs['transcript'],
+                            file_data['mfccs'].attrs['speaker_id']])
+        self.data = data
+
+    def build_vocabulary(self):
+        print('Building vocabulary...')
+        transcripts = [item[2] for item in self.data]
+        self.vocabulary = Vocabulary(batch=transcripts, device=self.device)
+        print('Vocabulary built.')
+        print()
+        print('Dataset Size:', len(self.data))
+        print('Model Vocab Size:', self.vocabulary.vocab_size)
+        print()
+
+    def load_checkpoint_vocabulary(self):
+        print('Loading checkpoint vocabulary...')
+        vocabulary_path = Path(self.checkpoint_path, 'vocabulary.pt')
+        self.vocabulary = Vocabulary(vocab=torch.load(vocabulary_path), device=self.device)
+        print('Vocabulary loaded.')
+        print()
+        print('Dataset Size:', len(self.data))
+        print('Model Vocab Size:', self.vocabulary.vocab_size)
+        print()
 
     def collate(self, batch):
-        # Pad batches?
         return batch
-
-        # sample_batch, target_batch = [], []
-        # for sample, target in batch:
-        #     sample_batch.append(sample)
-        #     target_batch.append(target)
-
-        # padded_batch = pad_sequence(sample_batch, batch_first=True)
-        # padded_to = list(padded_batch.size())[1]
-        # padded_batch = padded_batch.reshape(len(sample_batch), padded_to, 1)
-
-        # return padded_batch, torch.cat(target_batch, dim=0).reshape(len(sample_batch))
 
     def pad_source(self, source, max_length: int, mfcc_dim: int) -> Tensor:
         source_tensor = torch.tensor(source, device=self.device)
@@ -92,83 +155,127 @@ class Trainer():
         #     print('Unpadded predictions:', prediction.shape)
         return torch.cat(unpadded_targets).to(self.device), torch.cat(unpadded_predictions).to(self.device)
 
-    def train(self, num_epochs: int, batch_size: int, optimizer, learning_rate: float, lr_gamma: float,
-              num_warmup_steps: int, num_files: int | None = None):
-        # Import preprocessed mfcc data
-        data = []
-        files = list(Path('.').glob('mfcc/*.hdf5'))
+    def check_model_for_randomness(self):
+        random_source = torch.rand((self.batch_size, 80, 13))
+        random_target = torch.randint(low=0, high=20, size=(self.batch_size, 22)).to(torch.long)
 
-        if len(files) == 0:
-            print('No preprocessed MFCC folder detected. Preprocessing now...')
-            preprocessor = Preprocessor(dataset_url=SPLITS.DEV_CLEAN.value)
-            preprocessor.preprocess()
-            files = list(Path('.').glob('mfcc/*.hdf5'))
-            print()
+        self.model.eval()
+        with torch.no_grad():
+            out1, *_ = self.model(encoder_source=random_source, decoder_source=random_target)
+            out2, *_ = self.model(encoder_source=random_source, decoder_source=random_target)
+        self.model.train()
 
-        if num_files is not None:
-            files = files[:num_files]
-        for file in files:
-            with h5py.File(file, 'r') as file_data:
-                data.append([file_data['mfccs'][:],
-                            file_data['mfccs'].attrs['sample_rate'],
-                            file_data['mfccs'].attrs['transcript'],
-                            file_data['mfccs'].attrs['speaker_id']])
+        difference = torch.sum(out2 - out1).item()
+        if difference == 0:
+            print('Success! No model randomness detected.')
+        else:
+            print('Warning! Model randomness detected:', difference)
 
-        # Build vocabulary from all transcripts
-        print('Building vocabulary...')
-        transcripts = [item[2] for item in data]
-        self.vocabulary = Vocabulary(batch=transcripts, device=self.device)
-        vocab_size = self.vocabulary.vocab_size
-        print('Vocabulary built.')
-        print()
-        print('Files:', len(data))
-        print('Model Vocab Size:', vocab_size)
-        # all_words = vocab.get_itos()
+    def save_models(self, epoch: int):
+        save_directory = Path(self.run_path, f'models_{epoch}')
+        if not Path.exists(save_directory):
+            Path.mkdir(save_directory, parents=True)
+        torch.save(self.model.state_dict(), f'{save_directory}/model.pt')
+        torch.save(self.optimizer.state_dict(), f'{save_directory}/optimizer.pt')
+        torch.save(self.vocabulary.vocab, f'{save_directory}/vocabulary.pt')
+
+    def save_images(self):
+        pass
+        # metrics = Metrics(debug=self.debug)
+        # metrics.add_heatmap(data=padded_sources[0], ylabel='Source MFCCs')
+        # metrics.add_heatmap(data=embedded_source[0], ylabel='Source audio embedding')
+        # metrics.add_heatmap(data=pos_encoded_source[0], ylabel='Source pos encoding')
+        # metrics.add_heatmap(data=encoder_out[0], ylabel='Encoder out')
+        # metrics.add_heatmap(data=embedded_target[0], ylabel='Target word embedding')
+        # metrics.add_heatmap(data=pos_encoded_target[0], ylabel='Target pos encoding')
+        # metrics.add_heatmap(data=target_mask[0], ylabel='Target mask')
+        # metrics.add_heatmap(data=decoder_out[0], ylabel='Decoder out')
+        # metrics.add_heatmap(data=out[0], ylabel='Out')
+        # metrics.draw_heatmaps()
+        # summary_writer.add_figure('Heatmaps', plt.gcf(), global_step=global_step)
+        # plt.clf()
+
+        # # Write confusion matrix
+        # prediction_flat_collapsed = torch.argmax(prediction_flat, dim=-1)
+        # metrics.draw_confusion_matrix(target=target_flat, predicted=prediction_flat_collapsed)
+        # summary_writer.add_figure('Confusion Matrix', plt.gcf(), global_step=global_step)
+        # plt.clf()
+
+    def train(self):
+        self.import_data()
+
+        if self.checkpoint_path is not None:
+            if not Path.exists(self.checkpoint_path):
+                print('Error: Provided checkpoint path does not exist. Aborting...')
+                print()
+                return
+            self.load_checkpoint_vocabulary()
+        else:
+            self.build_vocabulary()
 
         # Prepare training data
-        train_loader = DataLoader(dataset=data, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
+        train_loader = DataLoader(dataset=self.data, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
         num_steps = len(train_loader)
-        print('Number of batches:', num_steps)
-        print()
 
         # Build model
-        self.model = Transformer(vocabulary=self.vocabulary, d_model=self.d_model, dropout=self.dropout,
-                                 num_heads=self.num_heads, max_length=self.max_length, num_layers=self.num_layers,
-                                 device=self.device, debug=self.debug).to(self.device)
+        self.model = Transformer(vocabulary=self.vocabulary, d_model=self.d_model, batch_size=self.batch_size,
+                                 dropout=self.dropout, num_heads=self.num_heads, max_length=self.max_length,
+                                 num_layers=self.num_layers, device=self.device, debug=self.debug).to(self.device)
+        if self.checkpoint_path is not None:
+            self.model.load_state_dict(torch.load(Path(self.checkpoint_path, 'model.pt')))
+        self.check_model_for_randomness()
 
         # Set optimizer and criterion
-        optimizer = optimizer(self.model.parameters(), lr=learning_rate, betas=(0.9, 0.98), eps=1e-9)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.98), eps=1e-9)
         criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1).to(self.device)
 
+        if self.checkpoint_path is not None and not self.reset_optimizer:
+            self.optimizer.load_state_dict(torch.load(Path(self.checkpoint_path, 'optimizer.pt')))
+
         # Create LR schedulers
-        warmup_scheduler = lr_scheduler.LinearLR(optimizer=optimizer, start_factor=1e-9, end_factor=1.0,
-                                                 total_iters=num_warmup_steps)
-        training_scheduler = lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=lr_gamma)
-        scheduler = warmup_scheduler  # SequentialLR uses deprecated pattern, produces warning
+        warmup_scheduler = lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=1e-9, end_factor=1.0,
+                                                 total_iters=self.num_warmup_steps) if self.num_warmup_steps > 0 else None
+        training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
+        scheduler = training_scheduler  # SequentialLR uses deprecated pattern, produces warning
 
-        run_path = Path(f'runs/{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}')
+        # Create tensorboard summary writer
         if self.debug:
-            run_path = Path('runs/debug')
-        if not Path.exists(run_path):
-            Path.mkdir(run_path, parents=True)
-        summary_writer = SummaryWriter(run_path)
+            self.run_path = Path('runs/debug')
+        if not Path.exists(self.run_path):
+            Path.mkdir(self.run_path, parents=True)
+        summary_writer = SummaryWriter(self.run_path)
+        graph_source = self.padded_source_from_batch(batch=self.data[:self.batch_size])
+        graph_target, _ = self.padded_target_from_batch(batch=self.data[:self.batch_size])
+        summary_writer.add_graph(self.model, (graph_source, graph_target))
 
         if self.debug:
-            num_epochs = 1
-            train_loader = DataLoader(dataset=data[4:8], batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
+            self.num_epochs = 1
+            train_loader = DataLoader(dataset=self.data[4:8], batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
 
-        num_steps_to_print = 10
-        print('Starting training...')
+        print_step = num_steps // self.output_lines_per_epoch
+        if print_step <= 0:
+            print_step = None
+        print()
+        if self.checkpoint_path is not None:
+            print('Continuing training from checkpoint model...')
+        else:
+            print('Starting training...')
         print()
         self.model.train()
         try:
-            for epoch in range(num_epochs):
+            for epoch in range(self.num_epochs):
                 start = time.time()
-                epoch_loss = 0
+                epoch_count = 0
                 epoch_tokens = 0
+                epoch_loss = 0
+                epoch_error = 0
+
                 for i, batch in enumerate(train_loader):
                     global_step = epoch * num_steps + i + 1
-                    scheduler = warmup_scheduler if global_step <= num_warmup_steps else training_scheduler
+                    if self.checkpoint_path is None and self.num_warmup_steps > 0 and global_step <= self.num_warmup_steps:
+                        scheduler = warmup_scheduler
+                    else:
+                        scheduler = training_scheduler
 
                     padded_sources = self.padded_source_from_batch(batch=batch)
                     padded_targets, pad_indices = self.padded_target_from_batch(batch=batch)
@@ -176,128 +283,74 @@ class Trainer():
                     (out, embedded_source, pos_encoded_source, encoder_out, embedded_target, pos_encoded_target,
                      target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
 
-                    # NOTE: Remove padding before calc loss!
-
                     target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
 
                     # Calculate loss & perform backprop
+                    self.optimizer.zero_grad()
                     loss = criterion(prediction_flat, target_flat)
                     loss.backward()
-                    optimizer.step()
+                    self.optimizer.step()
                     scheduler.step()
-                    optimizer.zero_grad()
 
-                    # For showing prediction
-                    target_indices = padded_targets[0]  # Take first of batch
-                    target_tokens = self.vocabulary.get_sequence_from_tensor(target_indices)
-                    prediction_indices = torch.argmax(out, dim=-1)[0]  # Take first of batch
-                    prediction_tokens = self.vocabulary.get_sequence_from_tensor(prediction_indices)
-
-                    # print('Target:', target_flat)
-                    # print('Target:', target_flat.shape)
-                    # prediction_raw = torch.argmax(prediction_flat, dim=-1)
-                    # print('Prediction:', prediction_raw)
-                    # print('Prediction:', prediction_raw.shape)
-
+                    epoch_count += len(batch)
+                    epoch_tokens += len(target_flat)
                     epoch_loss += loss.item()
-                    non_zero_tokens = (target_flat != 0) * 1
-                    epoch_tokens += torch.sum(non_zero_tokens).item()
+                    prediction_indices = torch.argmax(prediction_flat, dim=-1)
+                    epoch_error += torch.sum((prediction_indices != target_flat).float()).item()
 
                     # Print every x steps
-                    if (i + 1) % num_steps_to_print == 0:
+                    if print_step is not None and (i + 1) % print_step == 0:
                         elapsed = time.time() - start
-                        avg_loss = epoch_loss / (i + 1)
                         tokens_per_sec = epoch_tokens / elapsed
+                        avg_loss = epoch_loss / epoch_count
+                        word_error_rate = epoch_error / epoch_tokens
                         summary_writer.add_scalar('Loss (CE)', avg_loss, global_step=global_step)
                         summary_writer.add_scalar('LR', scheduler.get_last_lr()[0], global_step=global_step)
                         summary_writer.add_scalar('Tokens/sec', tokens_per_sec, global_step=global_step)
-                        print(f'Epoch: {(epoch+1):>3}/{num_epochs}  |  '
+                        summary_writer.add_scalar('WER', word_error_rate, global_step=global_step)
+                        summary_writer.add_histogram('Vocab Distribution', torch.mean(prediction_flat, dim=0), global_step=global_step)
+                        print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  |  '
                             f'Step: {(i+1):>4}/{num_steps}  |  '
                             f'Tokens/sec: {tokens_per_sec:>6.1f}  |  '
-                            f'Avg. Loss: {avg_loss:.4f}  |  '
+                            f'Loss: {avg_loss:.5f}  |  '
+                            f'WER: {word_error_rate:>6.1%}  |  '
                             f'LR: {scheduler.get_last_lr()[0]:.2e}  |  '
                             f'Epoch Time: {elapsed:>5.1f}s')
 
-                    if self.debug:
-                        print()
-                        print('Out shape:', out.shape)
-                        print('Loss inputs:', prediction_flat.shape, target_flat.shape)
-                        print()
-                        print('=== Decoder Input ===')
-                        print(target_indices.shape)
-                        print(target_indices)
-                        print(target_tokens)
-                        print()
-                        print('=== Prediction ===')
-                        print(prediction_indices.shape)
-                        print(prediction_indices)
-                        print(prediction_tokens)
-                        print()
-
-
-                # print()
-                # print('Decoder Input: ', ' '.join(target_tokens))
-                # print('Prediction:    ', ' '.join(prediction_tokens))
-                # print()
-
-                # if (epoch + 1) % 10 == 0:
-                self.model.eval()
-                # Remove padding
-                pad_token_tensor = self.vocabulary.get_tensor_from_sequence(self.vocabulary.pad_token)
-                target_pad_index = torch.argmax((target_indices == pad_token_tensor) * 1, dim=-1)
-                target_no_pad = target_indices[:target_pad_index]
-                for i in range(1, len(target_no_pad) + 1):
-                    encoder_in = padded_sources[:1]
-                    decoder_in = padded_targets[:1,:i]  # (N, seq_len) -> (1, i)
-                    out, *_ = self.model(encoder_source=padded_sources, decoder_source=decoder_in)
-                    decoder_out_indices = torch.argmax(out, dim=-1)
+                if self.checkpoint_after_epoch is not None and (epoch + 1) % self.checkpoint_after_epoch == 0:
+                    self.save_models(epoch + 1)
                     print()
-                    print('Decoder Input: ', ' '.join(self.vocabulary.get_sequence_from_tensor(decoder_in[0])))
-                    print('Prediction:    ', ' '.join(self.vocabulary.get_sequence_from_tensor(decoder_out_indices[0])))
-                    print()
-                self.model.train()
+                    print('Models saved.')
 
-                # Write heatmaps
-                metrics = Metrics(debug=self.debug)
-                metrics.add_heatmap(data=padded_sources[0], ylabel='Source MFCCs')
-                metrics.add_heatmap(data=embedded_source[0], ylabel='Source audio embedding')
-                metrics.add_heatmap(data=pos_encoded_source[0], ylabel='Source pos encoding')
-                metrics.add_heatmap(data=encoder_out[0], ylabel='Encoder out')
-                metrics.add_heatmap(data=embedded_target[0], ylabel='Target word embedding')
-                metrics.add_heatmap(data=pos_encoded_target[0], ylabel='Target pos encoding')
-                metrics.add_heatmap(data=target_mask[0], ylabel='Target mask')
-                metrics.add_heatmap(data=decoder_out[0], ylabel='Decoder out')
-                metrics.add_heatmap(data=out[0], ylabel='Out')
-                metrics.draw_heatmaps()
-                summary_writer.add_figure('Heatmaps', plt.gcf(), global_step=global_step)
-                plt.clf()
+                    self.model.eval()
 
-                # Write confusion matrix
-                prediction_flat_collapsed = torch.argmax(prediction_flat, dim=-1)
-                metrics.draw_confusion_matrix(target=target_flat, predicted=prediction_flat_collapsed)
-                summary_writer.add_figure('Confusion Matrix', plt.gcf(), global_step=global_step)
-                plt.clf()
+                    # Take random sample from dataset
+                    random_index = torch.randint(low=0, high=len(self.data), size=(1,)).item()
+                    random_sample_source = torch.tensor(self.data[random_index][0]).unsqueeze(0)
+                    random_sample_target = self.vocabulary.build_tokenized_target(self.data[random_index][2]).unsqueeze(0)
 
-                # prediction_no_grad = prediction.clone().detach().requires_grad_(False)
-                # # prediction_display = F.softmax(prediction_no_grad, dim=-1)
-                # metrics.show_heatmap(data=prediction_no_grad, xlabel='Vocab', ylabel='Sequence')
+                    # Copy data across batch size
+                    random_sample_source = random_sample_source.expand((self.batch_size, random_sample_source.shape[1], random_sample_source.shape[2]))
+                    random_sample_target = random_sample_target.expand((self.batch_size, random_sample_target.shape[1]))
+
+                    # Iterate through the random sample target sequence and output the prediction
+                    for i in range(1, random_sample_target.shape[1] + 1):
+                        decoder_in = random_sample_target[:, :i]
+                        sample_out, *_ = self.model(encoder_source=random_sample_source, decoder_source=decoder_in)
+                        sample_out_indices = torch.argmax(sample_out, dim=-1)
+                        print()
+                        print('Decoder Input: ', ' '.join(self.vocabulary.get_sequence_from_tensor(decoder_in[0])))
+                        print('Prediction:    ', ' '.join(self.vocabulary.get_sequence_from_tensor(sample_out_indices[0])))
+                        print()
+                    self.model.train()
+
+                if self.cooldown is not None:
+                    time.sleep(self.cooldown)
 
         except KeyboardInterrupt:
             print('\r  ')
 
         print()
-        print('Training finished. Saving models...')
-
-        if not self.debug:
-            # Save model & optimizer
-            save_directory = Path(run_path, 'models')
-            if not Path.exists(save_directory):
-                Path.mkdir(save_directory, parents=True)
-            torch.save(self.model.state_dict(), f'{save_directory}/model.pt')
-            torch.save(optimizer.state_dict(), f'{save_directory}/optimizer.pt')
-            torch.save(self.vocabulary.vocab, f'{save_directory}/vocabulary.pt')
-
-        print()
-        print('Models saved.')
+        print('Training finished.')
         print()
         summary_writer.close()

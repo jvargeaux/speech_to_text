@@ -7,4 +7,5 @@ data
 mfcc
 models
 runs
+checkpoint
 test

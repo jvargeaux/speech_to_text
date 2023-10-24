@@ -13,6 +13,8 @@ from pathlib import Path
 import sounddevice as sd
 import h5py
 
+from config import Config
+
 
 class SPLITS(Enum):
     DEV_CLEAN = 'dev-clean'
@@ -47,9 +49,9 @@ class Preprocessor():
     '''
     def __init__(self, dataset_url: str = 'DEV_CLEAN'):
         # Set MFCC meta parameters
-        self.hop_length = 512  # number of samples to shift
-        self.n_fft = 2048  # number of samples per fft (window size)
-        self.n_mfcc = 13  # standard minimum
+        self.hop_length = Config.HOP_LENGTH  # number of samples to shift
+        self.n_fft = Config.N_FFT  # number of samples per fft (window size)
+        self.n_mfcc = Config.N_MFCC  # standard minimum
 
         self.data = None
         print('Dataset split:', dataset_url)
@@ -144,14 +146,6 @@ class Preprocessor():
             mfcc_path.mkdir(parents=True)
         print('Processing audio data...')
 
-        # if multiprocess is True:
-        #     num_processes = mp.cpu_count() - 1 or 1
-        #     print('Using number of processes:', num_processes)
-        #     pool = mp.Pool(processes=num_processes)
-        #     progress_bar = ProgressBar()
-        #     for i, _ in enumerate(pool.imap_unordered(self.process_audio, self.data)):
-        #         progress_bar.update(i + 1, len(self.data))
-
         progress_bar = ProgressBar()
         for x, item in enumerate(self.data):
             self.process_audio(item)
@@ -166,22 +160,6 @@ class Preprocessor():
                     print(mfccs_dataset)
                     for attr in list(mfccs_dataset.attrs):
                         print(f'{attr}: {mfccs_dataset.attrs[attr]}')
-
-    def collate(self, batch):
-        # Pad batches?
-        return batch
-
-        # sample_batch, target_batch = [], []
-        # for sample, target in batch:
-        #     sample_batch.append(sample)
-        #     target_batch.append(target)
-
-        # padded_batch = pad_sequence(sample_batch, batch_first=True)
-        # padded_to = list(padded_batch.size())[1]
-        # padded_batch = padded_batch.reshape(len(sample_batch), padded_to, 1)
-
-        # return padded_batch, torch.cat(target_batch, dim=0).reshape(len(sample_batch))
-
 
 def main():
     parser = argparse.ArgumentParser(
