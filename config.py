@@ -2,27 +2,27 @@ class Config:
     # Preprocessing
     MODEL_SAMPLE_RATE = 16000
     HOP_LENGTH = 512  # number of samples to shift
-    N_FFT = 2048  # number of samples per fft (window size)
-    N_MFCC = 13  # standard minimum
+    N_FFT = 1024  # number of samples per fft (window size)
+    MFCC_DEPTH = 40
 
     # Model
     D_MODEL = 512
     NUM_HEADS = 4
     DROPOUT = None
     MAX_LENGTH = 5000
-    NUM_LAYERS = 3
+    NUM_LAYERS = 4
+    BATCH_SIZE = 8
 
     # Training
-    NUM_EPOCHS = 100
-    BATCH_SIZE = 8
-    LR = 0.0001
-    LR_GAMMA = 0.999
+    NUM_EPOCHS = 40
+    LR = 1e-3
+    LR_GAMMA = 0.9998
     NUM_WARMUP_STEPS = 0
-    COOLDOWN = 10  # every epoch, None = no cooldown
+    COOLDOWN = 30  # every epoch, None = no cooldown
     SUBSET = None  # None = all
-    CHECKPOINT_PATH = None  # None = don't use
-    RESET_OPTIMIZER = False
+    CHECKPOINT_PATH = 'checkpoint/2/models'  # None = don't use
+    RESET_LR = True
 
     # Output
     OUTPUT_LINES_PER_EPOCH = 20
-    CHECKPOINT_AFTER_EPOCH = 5
+    CHECKPOINT_AFTER_EPOCH = 2

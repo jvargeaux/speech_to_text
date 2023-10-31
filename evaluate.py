@@ -17,7 +17,7 @@ def main():
              description='Evaluate the S2T model',
              epilog='Epilogue sample text')
 
-    parser.add_argument('--files', '-f', type=Path, nargs='+', help='Path to directory containing audio files to evaluate')
+    parser.add_argument('--files', '-f', type=Path, help='Path to directory containing audio files to evaluate')
     parser.add_argument('--model', '-m', type=Path, help='Path to model used for inference')
     args = parser.parse_args()
 
@@ -31,21 +31,19 @@ def main():
             samples = librosa.resample(y=samples, orig_sr=sr, target_sr=Config.MODEL_SAMPLE_RATE)
 
         # Preprocess audio
-        mfccs = librosa.feature.mfcc(y=samples, n_fft=Config.N_FFT, hop_length=Config.HOP_LENGTH, n_mfcc=Config.N_MFCC)
+        mfccs = librosa.feature.mfcc(y=samples, n_fft=Config.N_FFT, hop_length=Config.HOP_LENGTH, n_mfcc=Config.MFCC_DEPTH)
         mfccs = mfccs.T  # (num_bands, num_frames) -> (num_frames, num_bands)
-        processed_files.append(mfccs)
+        processed_files.append({
+            'name': file,
+            'mfccs': mfccs
+        })
 
     # Build model
     device = torch.device('cpu')
     vocabulary = Vocabulary(vocab=torch.load(Path(args.model, 'vocabulary.pt')), device=device)
-    d_model = Config.D_MODEL
-    dropout = 0.  # Do not drop any values! We are not training.
-    num_heads = Config.NUM_HEADS
-    max_length = Config.MAX_LENGTH
-    num_layers = Config.NUM_LAYERS
 
-    model = Transformer(vocabulary=vocabulary, d_model=d_model, dropout=dropout,
-                        num_heads=num_heads, max_length=max_length, num_layers=num_layers,
+    model = Transformer(vocabulary=vocabulary, d_model=Config.D_MODEL, dropout=None, batch_size=Config.BATCH_SIZE,
+                        num_heads=Config.NUM_HEADS, max_length=Config.MAX_LENGTH, num_layers=Config.NUM_LAYERS,
                         device=device).to(device)
     model.load_state_dict(torch.load(Path(args.model, 'model.pt')))
 
@@ -58,50 +56,69 @@ def main():
     model.eval()
 
     # Evaluate
-    for mfccs in processed_files:
+    for file in processed_files:
+        print(f'=====  {file["name"]}  =====')
+        mfccs = file['mfccs']
+
         # Init result tensor, we don't know how long it is yet
         result: Tensor = vocabulary.get_tensor_from_sequence('<sos>')
 
-        source = torch.tensor(mfccs, dtype=torch.float32, device=device)
-        print('Source shape:', source.shape)
+        source = torch.tensor(mfccs, dtype=torch.float32, device=device).unsqueeze(0)
+        if Config.BATCH_SIZE > 1:
+            # Pad batch with zeros
+            # source_pad: Tensor = torch.zeros((Config.BATCH_SIZE - 1, source.shape[1], source.shape[2]))
+            # source = torch.cat((source, source_pad))
+
+            # Duplicate across batch
+            source = source[0]
+            source = source.expand((Config.BATCH_SIZE, source.shape[0], source.shape[1]))
 
         is_end_of_sentence = False
-        max_tokens = 1000
+        MAX_OUTPUT_TOKENS = 200
+        result_length = 1
         while not is_end_of_sentence:
-            prediction, *_ = model(encoder_source=source.unsqueeze(0), decoder_source=result.unsqueeze(0))
+            expanded_result = result
+            if Config.BATCH_SIZE > 1:
+                # Pad batch with pad tokens
+                # pad_sequence = [vocabulary.sos_token] + [vocabulary.pad_token] * (result.shape[0] - 1)
+                # result_pad: Tensor = vocabulary.get_tensor_from_sequence(' '.join(pad_sequence)).unsqueeze(0)
+                # result_pad = result_pad.expand(Config.BATCH_SIZE - 1, result_pad.shape[1])
+                # expanded_result = torch.cat((result.unsqueeze(0), result_pad))
+
+                # Duplicate across batch
+                expanded_result = result.expand(Config.BATCH_SIZE, result.shape[0])
+
+            prediction, *_ = model(encoder_source=source, decoder_source=expanded_result)
+
+            # Take only the first sequence of the prediction batch, the source batch was padded
+            prediction = prediction[3]
 
             # Get predicted tokens
-            prediction = prediction.view(-1, prediction.shape[-1])
             prediction_indices = torch.argmax(prediction, dim=-1)
-            prediction_tokens = vocabulary.get_sequence_from_tensor(prediction_indices)
             print()
-            print('Input:', vocabulary.get_sequence_from_tensor(result))
-            print('Output:', prediction_tokens)
+            print('Input:', ' '.join(vocabulary.get_sequence_from_tensor(result)))
+            print('Output:', ' '.join(vocabulary.get_sequence_from_tensor(prediction_indices)))
 
-            # Append last output token and feed back into decoder input
-            last_token = vocabulary.get_tensor_from_sequence(prediction_tokens[-1])
-            result = torch.cat((result, last_token), dim=-1)
+            # Set result to current prediction with prepended sos token, and trim to length + 1
+            result_length += 1
+            result = torch.cat((vocabulary.get_tensor_from_sequence('<sos>'), prediction_indices), dim=-1)
+            result = result[:result_length]
+            # last_token = vocabulary.get_tensor_from_sequence(prediction_tokens[-1])
+            # result = torch.cat((result, last_token), dim=-1)
 
-            if prediction_tokens[-1] == vocabulary.eos_token:
+            if vocabulary.eos_token in vocabulary.get_sequence_from_tensor(prediction_indices):
                 print()
                 print('End of sentence token detected.')
                 is_end_of_sentence = True
-            if len(prediction_indices) > max_tokens:
+            if len(prediction_indices) > MAX_OUTPUT_TOKENS:
                 print()
                 print('Max output limit exceeded.')
                 is_end_of_sentence = True
 
-        # final_result = vocabulary.get_sequence_from_tensor(result)
-        # print()
-        # print('Result:', final_result)
-        # print('Result:', ' '.join(final_result[1:-1]))
-        # print()
-        # return
-        prediction_indices = torch.argmax(result, dim=-1)[0]
-        prediction_sequence = vocabulary.get_sequence_from_tensor(prediction_indices)
-        print('Prediction:', ' '.join(prediction_sequence))
-        # target_tokens = vocabulary.get_sequence_from_tensor(target_sequence[0])
-        # print('Target:', ' '.join(target_tokens))
+        print()
+        final_output = vocabulary.get_sequence_from_tensor(result)
+        print('Final Output:', ' '.join(final_output))
+        print()
         print()
 
 

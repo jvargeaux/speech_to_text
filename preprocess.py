@@ -51,7 +51,7 @@ class Preprocessor():
         # Set MFCC meta parameters
         self.hop_length = Config.HOP_LENGTH  # number of samples to shift
         self.n_fft = Config.N_FFT  # number of samples per fft (window size)
-        self.n_mfcc = Config.N_MFCC  # standard minimum
+        self.mfcc_depth = Config.MFCC_DEPTH
 
         self.data = None
         print('Dataset split:', dataset_url)
@@ -113,7 +113,7 @@ class Preprocessor():
 
         if mfcc is True:
             # Same as stft, remove first dimension
-            mfccs = librosa.feature.mfcc(y=samples, n_fft=self.n_fft, hop_length=self.hop_length, n_mfcc=self.n_mfcc)
+            mfccs = librosa.feature.mfcc(y=samples, n_fft=self.n_fft, hop_length=self.hop_length, n_mfcc=self.mfcc_depth)
             mfccs = mfccs[0]  # Remove first dimension (mono channel)
             librosa.display.specshow(mfccs, sr=sample_rate, hop_length=self.hop_length)
             plt.xlabel('Time')
@@ -124,7 +124,7 @@ class Preprocessor():
     def process_audio(self, item):
         samples, sample_rate, transcript, speaker_id, chapter_id, utterance_id = item
 
-        mfccs = librosa.feature.mfcc(y=samples.numpy(), n_fft=self.n_fft, hop_length=self.hop_length, n_mfcc=self.n_mfcc)
+        mfccs = librosa.feature.mfcc(y=samples.numpy(), n_fft=self.n_fft, hop_length=self.hop_length, n_mfcc=self.mfcc_depth)
         mfcc_bands = mfccs[0]
         mfcc_frames = mfcc_bands.T  # (num_bands, num_frames) -> (num_frames, num_bands)
 
@@ -144,6 +144,9 @@ class Preprocessor():
         mfcc_path = Path('mfcc')
         if not mfcc_path.exists():
             mfcc_path.mkdir(parents=True)
+        print('Hop length:', self.hop_length)
+        print('Samples per MFCC:', self.n_fft)
+        print('MFCC depth:', self.mfcc_depth)
         print('Processing audio data...')
 
         progress_bar = ProgressBar()

@@ -24,6 +24,7 @@ class Trainer():
                  dropout: float,
                  num_heads: int,
                  max_length: int,
+                 mfcc_depth: int,
                  num_epochs: int,
                  lr: float,
                  lr_gamma: float,
@@ -31,7 +32,7 @@ class Trainer():
                  output_lines_per_epoch: int,
                  checkpoint_after_epoch: int | None,
                  checkpoint_path: Path | None,
-                 reset_optimizer: bool,
+                 reset_lr: bool,
                  cooldown: int | None,
                  subset: int | None=None,
                  device: str='cpu',
@@ -42,13 +43,14 @@ class Trainer():
         self.dropout = dropout
         self.num_heads = num_heads
         self.max_length = max_length
+        self.batch_size = batch_size
+        self.mfcc_depth = mfcc_depth
 
         # Training
         self.device = device
         self.debug = debug
         self.run_path = Path(f'runs/{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}')
         self.num_epochs = num_epochs
-        self.batch_size = batch_size
         self.lr = lr
         self.lr_gamma = lr_gamma
         self.num_warmup_steps = num_warmup_steps
@@ -56,7 +58,7 @@ class Trainer():
         self.output_lines_per_epoch = output_lines_per_epoch
         self.checkpoint_after_epoch = checkpoint_after_epoch
         self.checkpoint_path = checkpoint_path
-        self.reset_optimizer = reset_optimizer
+        self.reset_lr = reset_lr
         self.subset = subset
 
         self.data = []
@@ -156,7 +158,7 @@ class Trainer():
         return torch.cat(unpadded_targets).to(self.device), torch.cat(unpadded_predictions).to(self.device)
 
     def check_model_for_randomness(self):
-        random_source = torch.rand((self.batch_size, 80, 13))
+        random_source = torch.rand((self.batch_size, 80, self.mfcc_depth))
         random_target = torch.randint(low=0, high=20, size=(self.batch_size, 22)).to(torch.long)
 
         self.model.eval()
@@ -220,7 +222,8 @@ class Trainer():
         # Build model
         self.model = Transformer(vocabulary=self.vocabulary, d_model=self.d_model, batch_size=self.batch_size,
                                  dropout=self.dropout, num_heads=self.num_heads, max_length=self.max_length,
-                                 num_layers=self.num_layers, device=self.device, debug=self.debug).to(self.device)
+                                 num_layers=self.num_layers, device=self.device, mfcc_depth=self.mfcc_depth,
+                                 debug=self.debug).to(self.device)
         if self.checkpoint_path is not None:
             self.model.load_state_dict(torch.load(Path(self.checkpoint_path, 'model.pt')))
         self.check_model_for_randomness()
@@ -229,13 +232,19 @@ class Trainer():
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.98), eps=1e-9)
         criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1).to(self.device)
 
-        if self.checkpoint_path is not None and not self.reset_optimizer:
+        if self.checkpoint_path is not None:
             self.optimizer.load_state_dict(torch.load(Path(self.checkpoint_path, 'optimizer.pt')))
+            if self.reset_lr:
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = self.lr
 
         # Create LR schedulers
-        warmup_scheduler = lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=1e-9, end_factor=1.0,
-                                                 total_iters=self.num_warmup_steps) if self.num_warmup_steps > 0 else None
+        warmup_scheduler = None
+        if self.checkpoint_path is None and self.num_warmup_steps > 0:
+            warmup_scheduler = lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=1e-9, end_factor=1.0,
+                                                    total_iters=self.num_warmup_steps)
         training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
+        # training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=500)
         scheduler = training_scheduler  # SequentialLR uses deprecated pattern, produces warning
 
         # Create tensorboard summary writer

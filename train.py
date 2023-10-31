@@ -23,10 +23,12 @@ def main():
                         default=Config.MAX_LENGTH, help='Max sequence length of positional encoding matrix')
     parser.add_argument('--num_layers', '-nl', type=int, nargs='?',
                         default=Config.NUM_LAYERS, help='Number of encoder/decoder layers')
-    parser.add_argument('--num_epochs', '-ne', type=int, nargs='?',
-                        default=Config.NUM_EPOCHS, help='Number of epochs')
+    parser.add_argument('--mfcc_depth', '-md', type=int, nargs='?',
+                        default=Config.MFCC_DEPTH, help='Size of preprocessed mfcc vector')
     parser.add_argument('--batch_size', '-b', type=int, nargs='?',
                         default=Config.BATCH_SIZE, help='Size of each batch')
+    parser.add_argument('--num_epochs', '-ne', type=int, nargs='?',
+                        default=Config.NUM_EPOCHS, help='Number of epochs')
     parser.add_argument('--lr', '-lr', type=float, nargs='?',
                         default=Config.LR, help='Base learning rate')
     parser.add_argument('--lr_gamma', '-lg', type=float, nargs='?',
@@ -41,7 +43,7 @@ def main():
                         default=Config.CHECKPOINT_AFTER_EPOCH, help='Save model checkpoint & sample prediction after x number of epochs')
     parser.add_argument('--checkpoint_path', '-c', type=Path, nargs='?',
                         default=Config.CHECKPOINT_PATH, help='Save model checkpoint & sample prediction after x number of epochs')
-    parser.add_argument('--reset_optimizer', '-r', action='store_true', default=Config.RESET_OPTIMIZER,
+    parser.add_argument('--reset_lr', '-r', action='store_true', default=Config.RESET_LR,
                         help='Should reset optimizer when loading checkpoint')
     parser.add_argument('--subset', '-s', type=int, nargs='?',
                         default=Config.SUBSET, help='Use a smaller subset with x number of files. None = use all')
@@ -64,15 +66,16 @@ def main():
     print('Embed dimension (d_model):', args.d_model)
     print('Num attention heads:', args.num_heads)
     print('Num encoder/decoder layers:', args.num_layers)
+    print('MFCC depth:', args.mfcc_depth)
+    print('Batch size:', args.batch_size)
     print('Max sequence length:', args.max_length)
     print('Dropout probability:', args.dropout)
-    print('Batch size:', args.batch_size)
     print('Learning rate:', args.lr)
     print('LR gamma:', args.lr_gamma)
     print('Num warmup steps:', args.num_warmup_steps)
     if args.checkpoint_path is not None:
         print('Using checkpoint model:', args.checkpoint_path)
-        print('Reset optimizer:', args.reset_optimizer)
+        print('Reset LR:', args.reset_lr)
     print()
     print()
 
@@ -82,10 +85,11 @@ def main():
                       dropout=args.dropout,
                       num_heads=args.num_heads,
                       max_length=args.max_length,
+                      batch_size=args.batch_size,
+                      mfcc_depth=args.mfcc_depth,
                       device=device,
                       debug=args.debug,
                       num_epochs=args.num_epochs,
-                      batch_size=args.batch_size,
                       lr=args.lr,
                       lr_gamma=args.lr_gamma,
                       num_warmup_steps=args.num_warmup_steps,
@@ -93,7 +97,7 @@ def main():
                       output_lines_per_epoch=args.output_lines_per_epoch,
                       checkpoint_after_epoch=args.checkpoint_after_epoch,
                       checkpoint_path=args.checkpoint_path,
-                      reset_optimizer=args.reset_optimizer,
+                      reset_lr=args.reset_lr,
                       subset=args.subset)
     trainer.train()
 

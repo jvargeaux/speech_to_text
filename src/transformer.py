@@ -441,14 +441,14 @@ class Transformer(nn.Module):
     share a common weight matrix.
     '''
     def __init__(self, vocabulary: Vocabulary, d_model: int, batch_size: int, num_layers: int, dropout: float,
-                 num_heads: int, max_length: int, device, debug = False):
+                 num_heads: int, max_length: int, mfcc_depth: int, device, debug = False):
         super().__init__()
         self.vocabulary = vocabulary
         vocab_size = vocabulary.vocab_size
         self.d_model = d_model
         self.device = device
         self.debug = debug
-        self.audio_embedder = AudioEmbedder(embed_dim=d_model, device=device, mfcc_depth=13)
+        self.audio_embedder = AudioEmbedder(embed_dim=d_model, device=device, mfcc_depth=mfcc_depth)
         self.word_embeddings = WordEmbedder(vocab_size=vocab_size, d_model=d_model)
         self.positional_encoding = PositionalEncoding(d_model=d_model, dropout=dropout, max_length=max_length)
         self.encoder = Encoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
