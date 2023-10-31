@@ -44,7 +44,7 @@ def main():
 
     model = Transformer(vocabulary=vocabulary, d_model=Config.D_MODEL, dropout=None, batch_size=Config.BATCH_SIZE,
                         num_heads=Config.NUM_HEADS, max_length=Config.MAX_LENGTH, num_layers=Config.NUM_LAYERS,
-                        device=device).to(device)
+                        mfcc_depth=Config.MFCC_DEPTH, device=device).to(device)
     model.load_state_dict(torch.load(Path(args.model, 'model.pt')))
 
     total_params = 0

@@ -16,12 +16,12 @@ class Config:
     # Training
     NUM_EPOCHS = 40
     LR = 1e-3
-    LR_GAMMA = 0.9998
+    LR_GAMMA = 0.9997
     NUM_WARMUP_STEPS = 0
     COOLDOWN = 30  # every epoch, None = no cooldown
     SUBSET = None  # None = all
-    CHECKPOINT_PATH = 'checkpoint/2/models'  # None = don't use
-    RESET_LR = True
+    CHECKPOINT_PATH = None  # None = don't use
+    RESET_LR = False
 
     # Output
     OUTPUT_LINES_PER_EPOCH = 20
