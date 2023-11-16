@@ -478,6 +478,12 @@ class Transformer(nn.Module):
         pos_encoded_target = self.positional_encoding(embedded_target)
         decoder_out = self.decoder(x=pos_encoded_target, encoder_out=encoder_out, source_mask=source_mask, target_mask=target_mask)
 
+        # Test using only encoder
+        # embedded_target = torch.zeros([1,])
+        # pos_encoded_target = torch.zeros([1,])
+        # target_mask = torch.zeros([1,])
+        # decoder_out = encoder_out
+
         out = self.linear(decoder_out)
         out = log_softmax(self.linear(decoder_out), dim=-1)
 

@@ -9,6 +9,9 @@ from torch import Tensor
 from src.transformer import Transformer
 from src.vocabulary import Vocabulary
 from config import Config
+import h5py
+
+config = Config()
 
 
 def main():
@@ -24,6 +27,7 @@ def main():
     # Preprocess
     processed_files = []
     files = list(args.files.glob('*.*'))
+
     for file in files:
         samples, sr = sf.read(file)
         # Resample if sample rate doesn't match
@@ -46,6 +50,7 @@ def main():
                         num_heads=Config.NUM_HEADS, max_length=Config.MAX_LENGTH, num_layers=Config.NUM_LAYERS,
                         mfcc_depth=Config.MFCC_DEPTH, device=device).to(device)
     model.load_state_dict(torch.load(Path(args.model, 'model.pt')))
+    model.eval()
 
     total_params = 0
     for param in model.parameters():
@@ -53,12 +58,14 @@ def main():
     print()
     print('Total model parameters:', total_params)
     print()
-    model.eval()
 
     # Evaluate
     for file in processed_files:
         print(f'=====  {file["name"]}  =====')
         mfccs = file['mfccs']
+
+        # Test with random tensor
+        # mfccs = torch.rand((200, Config.MFCC_DEPTH))
 
         # Init result tensor, we don't know how long it is yet
         result: Tensor = vocabulary.get_tensor_from_sequence('<sos>')
@@ -88,16 +95,22 @@ def main():
                 # Duplicate across batch
                 expanded_result = result.expand(Config.BATCH_SIZE, result.shape[0])
 
-            prediction, *_ = model(encoder_source=source, decoder_source=expanded_result)
+            out, *_ = model(encoder_source=source, decoder_source=expanded_result)
 
             # Take only the first sequence of the prediction batch, the source batch was padded
-            prediction = prediction[3]
+            avg_out = out[0]
+            for i in range(len(out) - 1):
+                avg_out += out[i + 1]
+            avg_out /= len(out)
+            prediction = avg_out
 
             # Get predicted tokens
             prediction_indices = torch.argmax(prediction, dim=-1)
-            print()
-            print('Input:', ' '.join(vocabulary.get_sequence_from_tensor(result)))
-            print('Output:', ' '.join(vocabulary.get_sequence_from_tensor(prediction_indices)))
+            # print()
+            # print('Input:', ' '.join(vocabulary.get_sequence_from_tensor(result)))
+            # for i in range(len(out)):
+            #     print(f'Prediction[{i}]:', ' '.join(vocabulary.get_sequence_from_tensor(torch.argmax(out[i], dim=-1))))
+            # print('Prediction (average):', ' '.join(vocabulary.get_sequence_from_tensor(prediction_indices)))
 
             # Set result to current prediction with prepended sos token, and trim to length + 1
             result_length += 1

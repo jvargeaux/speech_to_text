@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 import h5py
+import json
 import matplotlib.pyplot as plt
 import time
 import torch
@@ -10,10 +11,14 @@ from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from preprocess import Preprocessor, SPLITS
+from splits import SPLITS
+from preprocess import Preprocessor
+from config import Config
 from src.transformer import Transformer
 from src.vocabulary import Vocabulary
 from src.metrics import Metrics
+
+config = Config()
 
 
 class Trainer():
@@ -34,6 +39,7 @@ class Trainer():
                  checkpoint_path: Path | None,
                  reset_lr: bool,
                  cooldown: int | None,
+                 split: str,
                  subset: int | None=None,
                  device: str='cpu',
                  debug=False):
@@ -59,6 +65,7 @@ class Trainer():
         self.checkpoint_after_epoch = checkpoint_after_epoch
         self.checkpoint_path = checkpoint_path
         self.reset_lr = reset_lr
+        self.split = split
         self.subset = subset
 
         self.data = []
@@ -67,16 +74,18 @@ class Trainer():
         self.optimizer = None
 
     def import_data(self):
+        data_path = Path('mfcc', self.split)
         data = []
-        files = list(Path('.').glob('mfcc/*.hdf5'))
+        files = list(data_path.glob('*.hdf5'))
         if len(files) == 0:
-            print('No preprocessed MFCC folder detected. Preprocessing now...')
-            preprocessor = Preprocessor(dataset_url=SPLITS.DEV_CLEAN.value)
+            print(f'No data folder {data_path} detected. Preprocessing now...')
+            preprocessor = Preprocessor(split=self.split)
             preprocessor.preprocess()
-            files = list(Path('.').glob('mfcc/*.hdf5'))
+            files = list(data_path.glob('*.hdf5'))
             print()
         if self.subset is not None:
             files = files[:self.subset]
+        print('Loading mfcc data...')
         for file in files:
             with h5py.File(file, 'r') as file_data:
                 data.append([file_data['mfccs'][:],
@@ -84,6 +93,8 @@ class Trainer():
                             file_data['mfccs'].attrs['transcript'],
                             file_data['mfccs'].attrs['speaker_id']])
         self.data = data
+        print('Data loaded.')
+        print()
 
     def build_vocabulary(self):
         print('Building vocabulary...')
@@ -104,6 +115,11 @@ class Trainer():
         print('Dataset Size:', len(self.data))
         print('Model Vocab Size:', self.vocabulary.vocab_size)
         print()
+    
+    def save_config(self):
+        config_path = Path(self.run_path, 'config.json')
+        with open(config_path, 'w') as file:
+            file.write(json.dumps(vars(config)))
 
     def collate(self, batch):
         return batch
@@ -168,9 +184,7 @@ class Trainer():
         self.model.train()
 
         difference = torch.sum(out2 - out1).item()
-        if difference == 0:
-            print('Success! No model randomness detected.')
-        else:
+        if difference != 0:
             print('Warning! Model randomness detected:', difference)
 
     def save_models(self, epoch: int):
@@ -204,7 +218,10 @@ class Trainer():
         # plt.clf()
 
     def train(self):
-        self.import_data()
+        try:
+            self.import_data()
+        except:
+            return
 
         if self.checkpoint_path is not None:
             if not Path.exists(self.checkpoint_path):
@@ -252,6 +269,7 @@ class Trainer():
             self.run_path = Path('runs/debug')
         if not Path.exists(self.run_path):
             Path.mkdir(self.run_path, parents=True)
+        self.save_config()
         summary_writer = SummaryWriter(self.run_path)
         graph_source = self.padded_source_from_batch(batch=self.data[:self.batch_size])
         graph_target, _ = self.padded_target_from_batch(batch=self.data[:self.batch_size])
@@ -264,6 +282,7 @@ class Trainer():
         print_step = num_steps // self.output_lines_per_epoch
         if print_step <= 0:
             print_step = None
+        print()
         print()
         if self.checkpoint_path is not None:
             print('Continuing training from checkpoint model...')
@@ -307,9 +326,12 @@ class Trainer():
                     prediction_indices = torch.argmax(prediction_flat, dim=-1)
                     epoch_error += torch.sum((prediction_indices != target_flat).float()).item()
 
-                    # Print every x steps
+                    if self.cooldown is not None and self.cooldown > 0:
+                        time.sleep(self.cooldown)
+
                     if print_step is not None and (i + 1) % print_step == 0:
                         elapsed = time.time() - start
+                        step_time = elapsed / (i + 1)
                         tokens_per_sec = epoch_tokens / elapsed
                         avg_loss = epoch_loss / epoch_count
                         word_error_rate = epoch_error / epoch_tokens
@@ -324,7 +346,7 @@ class Trainer():
                             f'Loss: {avg_loss:.5f}  |  '
                             f'WER: {word_error_rate:>6.1%}  |  '
                             f'LR: {scheduler.get_last_lr()[0]:.2e}  |  '
-                            f'Epoch Time: {elapsed:>5.1f}s')
+                            f'Time: {step_time:>6.3f}s / {(elapsed / 60):>5.1f}m')
 
                 if self.checkpoint_after_epoch is not None and (epoch + 1) % self.checkpoint_after_epoch == 0:
                     self.save_models(epoch + 1)
@@ -352,9 +374,6 @@ class Trainer():
                         print('Prediction:    ', ' '.join(self.vocabulary.get_sequence_from_tensor(sample_out_indices[0])))
                         print()
                     self.model.train()
-
-                if self.cooldown is not None:
-                    time.sleep(self.cooldown)
 
         except KeyboardInterrupt:
             print('\r  ')

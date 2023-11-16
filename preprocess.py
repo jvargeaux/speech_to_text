@@ -1,8 +1,4 @@
 import argparse
-from enum import Enum
-import multiprocessing as mp
-import os
-
 import matplotlib.pyplot as plt
 import numpy as np
 from torch.utils.data import DataLoader
@@ -13,17 +9,10 @@ from pathlib import Path
 import sounddevice as sd
 import h5py
 
+from splits import SPLITS
 from config import Config
 
-
-class SPLITS(Enum):
-    DEV_CLEAN = 'dev-clean'
-    DEV_OTHER = 'dev-other'
-    TRAIN_CLEAN_100 = 'train-clean-100'
-    TRAIN_CLEAN_360 = 'train-clean-360'
-    TRAIN_OTHER_500 = 'train-other-500'
-    TEST_CLEAN = 'test-clean'
-    TEST_OTHER = 'test-other'
+config = Config()
 
 
 class ProgressBar():
@@ -47,28 +36,29 @@ class Preprocessor():
     Arguments
     - dataset_url: Name of dataset split, check SPLITS enum for options
     '''
-    def __init__(self, dataset_url: str = 'DEV_CLEAN'):
+    def __init__(self, split: str=SPLITS.DEV_CLEAN.value):
         # Set MFCC meta parameters
         self.hop_length = Config.HOP_LENGTH  # number of samples to shift
         self.n_fft = Config.N_FFT  # number of samples per fft (window size)
         self.mfcc_depth = Config.MFCC_DEPTH
 
         self.data = None
-        print('Dataset split:', dataset_url)
-        self.download_dataset(url=dataset_url)
+        self.split = split
+        print('Dataset split:', split)
+        self.download_dataset()
 
-    def download_dataset(self, url: str):
-        if url not in [item.value for item in SPLITS]:
-            print('Invalid dataset url. Check SPLITS enum for options.')
+    def download_dataset(self):
+        if self.split not in [item.value for item in SPLITS]:
+            print('Invalid split name. Check splits.py for options.')
             return
         data_path = Path('data')
         if not data_path.exists():
             data_path.mkdir(parents=True)
         # Updated dataset from LibriLightLimited -> LibriSpeech (same format)
-        data = torchaudio.datasets.LIBRISPEECH(root=data_path, url=url, download=True)
+        data = torchaudio.datasets.LIBRISPEECH(root=data_path, url=self.split, download=True)
         self.data = data
 
-    def show_test_data(self, index:int=0, waveform=False, spectrogram=False, mfcc=False, play=False):
+    def show_test_data(self, index: int=0, waveform=False, spectrogram=False, mfcc=False, play=False):
         if self.data is None:
             return
         test = self.data.__getitem__(index)
@@ -128,7 +118,7 @@ class Preprocessor():
         mfcc_bands = mfccs[0]
         mfcc_frames = mfcc_bands.T  # (num_bands, num_frames) -> (num_frames, num_bands)
 
-        with h5py.File(f'mfcc/{speaker_id}_{chapter_id}_{utterance_id}.hdf5', 'w') as file:
+        with h5py.File(Path('mfcc', self.split, f'{speaker_id}_{chapter_id}_{utterance_id}.hdf5'), 'w') as file:
             dataset = file.create_dataset('mfccs', data=mfcc_frames)
             dataset.attrs['speaker_id'] = speaker_id
             dataset.attrs['chapter_id'] = chapter_id
@@ -141,7 +131,7 @@ class Preprocessor():
             print('Data is empty. Aborted.')
             return
 
-        mfcc_path = Path('mfcc')
+        mfcc_path = Path('mfcc', self.split)
         if not mfcc_path.exists():
             mfcc_path.mkdir(parents=True)
         print('Hop length:', self.hop_length)
@@ -156,13 +146,14 @@ class Preprocessor():
         print('Preprocessing finished.')
 
     def read_preprocessed_data(self):
-        for _, _, files in os.walk('mfcc'):
-            for file in files:
-                with h5py.File(f'mfcc/{file}', 'r') as file_data:
-                    mfccs_dataset = file_data['mfccs']
-                    print(mfccs_dataset)
-                    for attr in list(mfccs_dataset.attrs):
-                        print(f'{attr}: {mfccs_dataset.attrs[attr]}')
+        files = list(Path('mfcc', self.split).glob('*.hdf5'))
+        for file in files[:5]:
+            with h5py.File(file, 'r') as file_data:
+                mfccs_dataset = file_data['mfccs']
+                print()
+                print(mfccs_dataset)
+                for attr in list(mfccs_dataset.attrs):
+                    print(f'{attr}: {mfccs_dataset.attrs[attr]}')
 
 def main():
     parser = argparse.ArgumentParser(
@@ -170,7 +161,7 @@ def main():
         description='Preprocess audio for the S2T transformer neural network',
         epilog='Epilogue sample text')
 
-    default_split = SPLITS.DEV_CLEAN.value
+    default_split = SPLITS.TRAIN_CLEAN_100.value
     parser.add_argument('--split', type=str, nargs='?', default=default_split, help='Name of dataset split to preprocess')
     parser.add_argument('-d', '--display', type=int, default=-1, help='Index of one data sample to display')
     parser.add_argument('-w', '--waveform', action='store_true', help='Display waveform')
@@ -181,7 +172,7 @@ def main():
 
     args = parser.parse_args()
 
-    preprocessor = Preprocessor(dataset_url=args.split)
+    preprocessor = Preprocessor(split=args.split)
 
     if args.display != -1:
         preprocessor.show_test_data(
