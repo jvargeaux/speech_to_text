@@ -32,6 +32,7 @@ class Trainer():
                  num_epochs: int,
                  lr: float,
                  lr_gamma: float,
+                 weight_decay: float | None,
                  num_warmup_steps: int | None,
                  output_lines_per_epoch: int,
                  checkpoint_after_epoch: int | None,
@@ -59,6 +60,7 @@ class Trainer():
         self.num_epochs = num_epochs
         self.lr = lr
         self.lr_gamma = lr_gamma
+        self.weight_decay = weight_decay
         self.num_warmup_steps = num_warmup_steps
         self.cooldown = cooldown
         self.output_lines_per_epoch = output_lines_per_epoch
@@ -259,7 +261,8 @@ class Trainer():
         self.check_model_for_randomness()
 
         # Set optimizer and criterion
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.98), eps=1e-9)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.98), eps=1e-9,
+                                          weight_decay=self.weight_decay)
         criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1).to(self.device)
 
         if self.checkpoint_path is not None:

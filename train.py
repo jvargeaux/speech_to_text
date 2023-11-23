@@ -54,6 +54,8 @@ def main():
                         default=Config.LR, help='Base learning rate')
     parser.add_argument('--lr_gamma', '-lg', type=float, nargs='?',
                         default=Config.LR_GAMMA, help='Gamma for learning rate scheduler')
+    parser.add_argument('--weight_decay', '-wd', type=float, nargs='?',
+                        default=Config.WEIGHT_DECAY, help='Weight decay (L2 penalty) for optimizer')
     parser.add_argument('--num_warmup_steps', '-nw', type=int, nargs='?',
                         default=Config.NUM_WARMUP_STEPS, help='Number of warmup steps in LR scheduler')
     parser.add_argument('--cooldown', '-cd', type=int, nargs='?',
@@ -104,6 +106,7 @@ def main():
     print('Subset:', args.subset)
     print('Learning rate:', args.lr)
     print('LR gamma:', args.lr_gamma)
+    print('Weight decay:', args.weight_decay)
     print('Num warmup steps:', args.num_warmup_steps)
     print('Cooldown:', args.cooldown)
     if args.checkpoint_path is not None:
@@ -126,6 +129,7 @@ def main():
                       num_epochs=args.num_epochs,
                       lr=args.lr,
                       lr_gamma=args.lr_gamma,
+                      weight_decay=args.weight_decay,
                       num_warmup_steps=args.num_warmup_steps,
                       cooldown=args.cooldown,
                       output_lines_per_epoch=args.output_lines_per_epoch,
