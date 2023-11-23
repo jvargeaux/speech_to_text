@@ -1,32 +1,32 @@
 from splits import SPLITS
 
-class Config(object):
-    def __init__(self):
-        # Preprocessing
-        self.MODEL_SAMPLE_RATE = 16000
-        self.HOP_LENGTH = 512  # number of samples to shift
-        self.N_FFT = 1024  # number of samples per fft (window size)
-        self.MFCC_DEPTH = 48
+class Config:
+    # Preprocessing
+    MODEL_SAMPLE_RATE = 16000
+    HOP_LENGTH = 320  # number of samples to shift  |  16000 / 320 = 50 per second
+    N_FFT = 640  # number of samples per fft (window size)
+    MFCC_DEPTH = 64
 
-        # Model
-        self.D_MODEL = 512
-        self.NUM_HEADS = 4
-        self.DROPOUT = 0.1
-        self.MAX_LENGTH = 5000
-        self.NUM_LAYERS = 2
-        self.BATCH_SIZE = 8
+    # Model
+    D_MODEL = 512
+    NUM_HEADS = 4
+    DROPOUT = 0.1
+    MAX_LENGTH = 500  # 50 per second = 10s total  |  audio encoder x4 compression = 40s max
+    MAX_VOCAB_SIZE = 10000
+    NUM_LAYERS = 2
+    BATCH_SIZE = 8
 
-        # Training
-        self.NUM_EPOCHS = 10
-        self.LR = 0.0001
-        self.LR_GAMMA = 0.9998
-        self.NUM_WARMUP_STEPS = 1000
-        self.COOLDOWN = 0  # seconds every step, None = no cooldown
-        self.SPLIT = SPLITS.TRAIN_CLEAN_100.value
-        self.SUBSET = None  # None = all
-        self.CHECKPOINT_PATH = None  # None = don't use
-        self.RESET_LR = False
+    # Training
+    NUM_EPOCHS = 20
+    LR = 8e-4
+    LR_GAMMA = 0.99995
+    NUM_WARMUP_STEPS = 100
+    COOLDOWN = 0  # seconds every step, None = no cooldown
+    SPLIT = SPLITS.TRAIN_CLEAN_100.value
+    SUBSET = None  # None = all
+    CHECKPOINT_PATH = None  # None = don't use
+    RESET_LR = True
 
-        # Output
-        self.OUTPUT_LINES_PER_EPOCH = 200
-        self.CHECKPOINT_AFTER_EPOCH = 1
+    # Output
+    OUTPUT_LINES_PER_EPOCH = 400
+    CHECKPOINT_AFTER_EPOCH = 1

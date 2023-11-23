@@ -8,4 +8,5 @@ mfcc
 models
 runs
 checkpoint
+compare
 test

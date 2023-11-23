@@ -5,7 +5,7 @@ from torchtext.vocab import build_vocab_from_iterator, Vocab
 
 
 class Vocabulary():
-    def __init__(self, batch = None, device = None, vocab: Vocab = None):
+    def __init__(self, batch=None, vocab: Vocab=None, max_size: int | None=None, device=None):
         # Go through all batches of data, and expand the vocabulary
         self.device = device
         self.tokenizer = get_tokenizer('basic_english')
@@ -15,6 +15,7 @@ class Vocabulary():
         self.unk_token = '<unk>'
         self.vocab = None
         self.vocab_size = 0
+        self.max_size = max_size
         if batch is not None:
             self.init_vocab(batch)
         if vocab is not None:
@@ -22,7 +23,8 @@ class Vocabulary():
 
     def init_vocab(self, batch):
         self.vocab = build_vocab_from_iterator(map(self.tokenizer, batch),
-                                               specials=[self.unk_token, self.sos_token, self.eos_token, self.pad_token])
+                                               specials=[self.unk_token, self.sos_token, self.eos_token, self.pad_token],
+                                               max_tokens=self.max_size)
         self.vocab.set_default_index(self.vocab[self.unk_token])
         self.vocab_size = len(self.vocab)
 

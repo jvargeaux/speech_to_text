@@ -19,7 +19,7 @@ class Logger():
 log = Logger(debug=False)
 
 
-class AudioEmbedder(nn.Module):
+class AudioEmbedder1d(nn.Module):
     '''
     Convert MFCC data taken from preprocessed audio samples directly into word
     embedding vectors, skipping the symbol tokenization process (for text).
@@ -41,16 +41,54 @@ class AudioEmbedder(nn.Module):
     (N, c, d_m) -> (N, t, d_v)
     Ex: 187 chunks of 13 mfccs, target length of 20 words, word embedding dimension of 64
     (1, 187, 13) -> (1, 20, 64)
+    '''
+    def __init__(self, embed_dim: int, device, mfcc_depth: int):
+        super().__init__()
+        conv_depth = embed_dim // 4
+        sequence_compression_rate = 2
+        self.device = device
+        self.embed_dim = embed_dim
+        self.conv = nn.Sequential(
+            nn.Conv1d(in_channels=mfcc_depth, out_channels=conv_depth, kernel_size=5, stride=sequence_compression_rate, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(in_channels=conv_depth, out_channels=embed_dim, kernel_size=5, stride=sequence_compression_rate, padding=2),
+            nn.ReLU(),
+        )
+        self.norm = nn.LayerNorm(embed_dim, device=self.device)
+        self.fc = nn.Linear(in_features=embed_dim, out_features=embed_dim, device=self.device)
 
-    ```
-      | [o] \\
-      | [o]  \\
-      | [o]    [o] |
-    n | [o]    [o] | t
-      | [o]    [o] |
-      | [o]  //
-      | [o] //
-    ```
+    def forward(self, source: Tensor):
+        # Input shape: (N, seq_len, d_mfcc)
+        out = source.permute(0, 2, 1)  # (N, d_mfcc, seq_len)
+        out = self.conv(out)  # (N, conv_depth, seq_len/2)
+        out = out.permute(0, 2, 1)  # (N, seq_len/2, conv_depth)
+        out = self.norm(out)
+        out = self.fc(out)  # (N, seq_len/2, d_model)
+        return out
+
+
+class AudioEmbedder2d(nn.Module):
+    '''
+    Convert MFCC data taken from preprocessed audio samples directly into word
+    embedding vectors, skipping the symbol tokenization process (for text).
+
+    x: Samples -> MFCCs -> tokens -> word embeddings
+    o: Samples -> MFCCs -> word embeddings
+
+    Additionally, the number of chunks of MFCCs don't match the target sequence length.
+    So after convolution, we create a linear projection to form matching source and
+    target sequence lengths.
+
+    Arguments
+    --
+    - source: preprocessed MFCC data of shape `(N, c, d_m)`, where `N` is the number of batches,
+    `c` is the number of chunks, and `d_m` is the dimension of the MFCC vector
+    - target_length (t): length of the target sequence
+    - embed_dim (d_v): dimension of the word embedding vector
+
+    (N, c, d_m) -> (N, t, d_v)
+    Ex: 187 chunks of 13 mfccs, target length of 20 words, word embedding dimension of 64
+    (1, 187, 13) -> (1, 20, 64)
     '''
     def __init__(self, embed_dim: int, device, mfcc_depth: int):
         super().__init__()
@@ -448,7 +486,7 @@ class Transformer(nn.Module):
         self.d_model = d_model
         self.device = device
         self.debug = debug
-        self.audio_embedder = AudioEmbedder(embed_dim=d_model, device=device, mfcc_depth=mfcc_depth)
+        self.audio_embedder = AudioEmbedder1d(embed_dim=d_model, device=device, mfcc_depth=mfcc_depth)
         self.word_embeddings = WordEmbedder(vocab_size=vocab_size, d_model=d_model)
         self.positional_encoding = PositionalEncoding(d_model=d_model, dropout=dropout, max_length=max_length)
         self.encoder = Encoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)

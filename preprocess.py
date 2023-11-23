@@ -12,8 +12,6 @@ import h5py
 from splits import SPLITS
 from config import Config
 
-config = Config()
-
 
 class ProgressBar():
     def __init__(self):

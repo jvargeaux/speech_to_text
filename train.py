@@ -1,11 +1,28 @@
 import argparse
 from pathlib import Path
+import shutil
 import torch
 from torch import nn
 from src.trainer import Trainer
 from config import Config
 
-config = Config()
+
+def clear_runs() -> bool:
+    print()
+    confirm = ''
+    while not confirm:
+        confirm = input('Remove all runs. Are you sure? (Y/n): ').lower().strip()
+    if confirm != 'y':
+        print('Understood. Aborting...')
+        return False
+
+    runs_path = Path('runs')
+    try:
+        shutil.rmtree(runs_path)
+    except OSError as error:
+        print(error)
+    
+    return True
 
 
 def main():
@@ -14,45 +31,53 @@ def main():
         description='Train the S2T transformer neural network',
         epilog='Epilogue sample text')
 
-    # Hyperparameters from args/config
+    # Hyperparameters from args/Config
     parser.add_argument('--d_model', '-dm', type=int, nargs='?',
-                        default=config.D_MODEL, help='Size of embedding vector')
+                        default=Config.D_MODEL, help='Size of embedding vector')
     parser.add_argument('--num_heads', '-nh', type=int, nargs='?',
-                        default=config.NUM_HEADS, help='Number of attention heads')
+                        default=Config.NUM_HEADS, help='Number of attention heads')
     parser.add_argument('--dropout', '-d', type=float, nargs='?',
-                        default=config.DROPOUT, help='Dropout probability')
-    parser.add_argument('--max_length', '-m', type=int, nargs='?',
-                        default=config.MAX_LENGTH, help='Max sequence length of positional encoding matrix')
+                        default=Config.DROPOUT, help='Dropout probability')
+    parser.add_argument('--max_length', '-ml', type=int, nargs='?',
+                        default=Config.MAX_LENGTH, help='Max sequence length of positional encoding matrix')
+    parser.add_argument('--max_vocab_size', '-mv', type=int, nargs='?',
+                        default=Config.MAX_VOCAB_SIZE, help='Max size of vocabulary')
     parser.add_argument('--num_layers', '-nl', type=int, nargs='?',
-                        default=config.NUM_LAYERS, help='Number of encoder/decoder layers')
+                        default=Config.NUM_LAYERS, help='Number of encoder/decoder layers')
     parser.add_argument('--mfcc_depth', '-md', type=int, nargs='?',
-                        default=config.MFCC_DEPTH, help='Size of preprocessed mfcc vector')
+                        default=Config.MFCC_DEPTH, help='Size of preprocessed mfcc vector')
     parser.add_argument('--batch_size', '-b', type=int, nargs='?',
-                        default=config.BATCH_SIZE, help='Size of each batch')
+                        default=Config.BATCH_SIZE, help='Size of each batch')
     parser.add_argument('--num_epochs', '-ne', type=int, nargs='?',
-                        default=config.NUM_EPOCHS, help='Number of epochs')
+                        default=Config.NUM_EPOCHS, help='Number of epochs')
     parser.add_argument('--lr', '-lr', type=float, nargs='?',
-                        default=config.LR, help='Base learning rate')
+                        default=Config.LR, help='Base learning rate')
     parser.add_argument('--lr_gamma', '-lg', type=float, nargs='?',
-                        default=config.LR_GAMMA, help='Gamma for learning rate scheduler')
+                        default=Config.LR_GAMMA, help='Gamma for learning rate scheduler')
     parser.add_argument('--num_warmup_steps', '-nw', type=int, nargs='?',
-                        default=config.NUM_WARMUP_STEPS, help='Number of warmup steps in LR scheduler')
+                        default=Config.NUM_WARMUP_STEPS, help='Number of warmup steps in LR scheduler')
     parser.add_argument('--cooldown', '-cd', type=int, nargs='?',
-                        default=config.COOLDOWN, help='Number of seconds to sleep after each epoch')
+                        default=Config.COOLDOWN, help='Number of seconds to sleep after each epoch')
     parser.add_argument('--output_lines_per_epoch', '-le', type=int, nargs='?',
-                        default=config.OUTPUT_LINES_PER_EPOCH, help='Number of lines of output per epoch')
+                        default=Config.OUTPUT_LINES_PER_EPOCH, help='Number of lines of output per epoch')
     parser.add_argument('--checkpoint_after_epoch', '-se', type=int, nargs='?',
-                        default=config.CHECKPOINT_AFTER_EPOCH, help='Save model checkpoint & sample prediction after x number of epochs')
-    parser.add_argument('--checkpoint_path', '-c', type=Path, nargs='?',
-                        default=config.CHECKPOINT_PATH, help='Save model checkpoint & sample prediction after x number of epochs')
-    parser.add_argument('--reset_lr', '-r', action='store_true', default=config.RESET_LR,
+                        default=Config.CHECKPOINT_AFTER_EPOCH, help='Save model checkpoint & sample prediction after x number of epochs')
+    parser.add_argument('--checkpoint_path', '-cp', type=Path, nargs='?',
+                        default=Config.CHECKPOINT_PATH, help='Save model checkpoint & sample prediction after x number of epochs')
+    parser.add_argument('--reset_lr', action='store_true', default=Config.RESET_LR,
                         help='Should reset optimizer when loading checkpoint')
     parser.add_argument('--split', '-s', type=str,
-                        default=config.SPLIT, help='Name of dataset split to use')
+                        default=Config.SPLIT, help='Name of dataset split to use')
     parser.add_argument('--subset', '-sub', type=int, nargs='?',
-                        default=config.SUBSET, help='Use a smaller subset with x number of files. None = use all')
+                        default=Config.SUBSET, help='Use a smaller subset with x number of files. None = use all')
     parser.add_argument('--debug', action='store_true', help='Run through only one training example for debugging')
+    parser.add_argument('--clear_runs', '-c', action='store_true', help='Remove the runs directory to start fresh')
     args = parser.parse_args()
+
+    if args.clear_runs:
+        ok_to_continue = clear_runs()
+        if not ok_to_continue:
+            return
 
     # Set device
     device = 'cpu'
@@ -62,10 +87,10 @@ def main():
     #     device = 'mps'
     device = torch.device(device)
 
-    # Display config
+    # Display Config
     print()
     print()
-    print('-----  config  -----')
+    print('-----  Config  -----')
     print('Device:', device)
     print('Embed dimension (d_model):', args.d_model)
     print('Num attention heads:', args.num_heads)
@@ -73,6 +98,7 @@ def main():
     print('MFCC depth:', args.mfcc_depth)
     print('Batch size:', args.batch_size)
     print('Max sequence length:', args.max_length)
+    print('Max vocab size:', args.max_vocab_size)
     print('Dropout probability:', args.dropout)
     print('Split:', args.split)
     print('Subset:', args.subset)
@@ -92,6 +118,7 @@ def main():
                       dropout=args.dropout,
                       num_heads=args.num_heads,
                       max_length=args.max_length,
+                      max_vocab_size=args.max_vocab_size,
                       batch_size=args.batch_size,
                       mfcc_depth=args.mfcc_depth,
                       device=device,

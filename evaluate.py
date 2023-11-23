@@ -11,8 +11,6 @@ from src.vocabulary import Vocabulary
 from config import Config
 import h5py
 
-config = Config()
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -53,11 +51,20 @@ def main():
     model.eval()
 
     total_params = 0
-    for param in model.parameters():
-        total_params += sum(list(param.size()))
+    total_size = 0
+    params = []
+    for name, param in model.named_parameters():
+        total_params += param.nelement()
+        size = param.nelement() * param.element_size()
+        total_size += size
+        params.append((name, size))
+    params = sorted(params, key=lambda x: x[1], reverse=True)
     print()
     print('Total model parameters:', total_params)
+    print('Total model size:', total_size)
     print()
+    for param in params[:50]:
+        print(param)
 
     # Evaluate
     for file in processed_files:

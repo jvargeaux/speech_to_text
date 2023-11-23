@@ -18,8 +18,6 @@ from src.transformer import Transformer
 from src.vocabulary import Vocabulary
 from src.metrics import Metrics
 
-config = Config()
-
 
 class Trainer():
     def __init__(self,
@@ -29,6 +27,7 @@ class Trainer():
                  dropout: float,
                  num_heads: int,
                  max_length: int,
+                 max_vocab_size: int | None,
                  mfcc_depth: int,
                  num_epochs: int,
                  lr: float,
@@ -49,6 +48,7 @@ class Trainer():
         self.dropout = dropout
         self.num_heads = num_heads
         self.max_length = max_length
+        self.max_vocab_size = max_vocab_size
         self.batch_size = batch_size
         self.mfcc_depth = mfcc_depth
 
@@ -99,7 +99,7 @@ class Trainer():
     def build_vocabulary(self):
         print('Building vocabulary...')
         transcripts = [item[2] for item in self.data]
-        self.vocabulary = Vocabulary(batch=transcripts, device=self.device)
+        self.vocabulary = Vocabulary(batch=transcripts, max_size=self.max_vocab_size, device=self.device)
         print('Vocabulary built.')
         print()
         print('Dataset Size:', len(self.data))
@@ -116,10 +116,19 @@ class Trainer():
         print('Model Vocab Size:', self.vocabulary.vocab_size)
         print()
     
+    def verify_longest_sequence(self):
+        longest = 0
+        for item in self.data:
+            if len(item[0]) > longest:
+                longest = len(item[0])
+        print('Longest sequence length:', longest)
+        print('Longest sequence length (after embedding):', longest // 4)
+    
     def save_config(self):
         config_path = Path(self.run_path, 'config.json')
+        config = { key: value for key, value in vars(Config).items() if not '__' in key }
         with open(config_path, 'w') as file:
-            file.write(json.dumps(vars(config)))
+            file.write(json.dumps(config))
 
     def collate(self, batch):
         return batch
@@ -174,8 +183,8 @@ class Trainer():
         return torch.cat(unpadded_targets).to(self.device), torch.cat(unpadded_predictions).to(self.device)
 
     def check_model_for_randomness(self):
-        random_source = torch.rand((self.batch_size, 80, self.mfcc_depth))
-        random_target = torch.randint(low=0, high=20, size=(self.batch_size, 22)).to(torch.long)
+        random_source = torch.rand((self.batch_size, 80, self.mfcc_depth), device=self.device)
+        random_target = torch.randint(low=0, high=20, size=(self.batch_size, 22), device=self.device).to(torch.long)
 
         self.model.eval()
         with torch.no_grad():
@@ -187,13 +196,15 @@ class Trainer():
         if difference != 0:
             print('Warning! Model randomness detected:', difference)
 
-    def save_models(self, epoch: int):
+    def save_models(self, epoch: int, global_step: int):
         save_directory = Path(self.run_path, f'models_{epoch}')
         if not Path.exists(save_directory):
             Path.mkdir(save_directory, parents=True)
         torch.save(self.model.state_dict(), f'{save_directory}/model.pt')
         torch.save(self.optimizer.state_dict(), f'{save_directory}/optimizer.pt')
         torch.save(self.vocabulary.vocab, f'{save_directory}/vocabulary.pt')
+        with open(Path(save_directory, 'global_step.json'), 'w') as file:
+            file.write(json.dumps({ 'global_step': global_step }))
 
     def save_images(self):
         pass
@@ -222,6 +233,8 @@ class Trainer():
             self.import_data()
         except:
             return
+        self.verify_longest_sequence()
+        print()
 
         if self.checkpoint_path is not None:
             if not Path.exists(self.checkpoint_path):
@@ -261,7 +274,7 @@ class Trainer():
             warmup_scheduler = lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=1e-9, end_factor=1.0,
                                                     total_iters=self.num_warmup_steps)
         training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
-        # training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=500)
+        # training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=num_steps * 2, eta_min=2e-4)
         scheduler = training_scheduler  # SequentialLR uses deprecated pattern, produces warning
 
         # Create tensorboard summary writer
@@ -284,7 +297,13 @@ class Trainer():
             print_step = None
         print()
         print()
+        start_step = 0
         if self.checkpoint_path is not None:
+            step_path = Path(self.checkpoint_path, 'global_step.json')
+            if Path.exists(step_path):
+                with open(step_path, 'r') as file:
+                    step_file = json.load(file)
+                    start_step = step_file['global_step']
             print('Continuing training from checkpoint model...')
         else:
             print('Starting training...')
@@ -299,7 +318,7 @@ class Trainer():
                 epoch_error = 0
 
                 for i, batch in enumerate(train_loader):
-                    global_step = epoch * num_steps + i + 1
+                    global_step = start_step + (epoch * num_steps + i + 1)
                     if self.checkpoint_path is None and self.num_warmup_steps > 0 and global_step <= self.num_warmup_steps:
                         scheduler = warmup_scheduler
                     else:
@@ -335,10 +354,10 @@ class Trainer():
                         tokens_per_sec = epoch_tokens / elapsed
                         avg_loss = epoch_loss / epoch_count
                         word_error_rate = epoch_error / epoch_tokens
-                        summary_writer.add_scalar('Loss (CE)', avg_loss, global_step=global_step)
-                        summary_writer.add_scalar('LR', scheduler.get_last_lr()[0], global_step=global_step)
-                        summary_writer.add_scalar('Tokens/sec', tokens_per_sec, global_step=global_step)
-                        summary_writer.add_scalar('WER', word_error_rate, global_step=global_step)
+                        summary_writer.add_scalar('Metrics/1 WER', word_error_rate, global_step=global_step)
+                        summary_writer.add_scalar('Metrics/2 Loss (CE)', avg_loss, global_step=global_step)
+                        summary_writer.add_scalar('Metrics/3 LR', scheduler.get_last_lr()[0], global_step=global_step)
+                        summary_writer.add_scalar('Performance/Tokens Per Second', tokens_per_sec, global_step=global_step)
                         summary_writer.add_histogram('Vocab Distribution', torch.mean(prediction_flat, dim=0), global_step=global_step)
                         print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  |  '
                             f'Step: {(i+1):>4}/{num_steps}  |  '
@@ -346,10 +365,10 @@ class Trainer():
                             f'Loss: {avg_loss:.5f}  |  '
                             f'WER: {word_error_rate:>6.1%}  |  '
                             f'LR: {scheduler.get_last_lr()[0]:.2e}  |  '
-                            f'Time: {step_time:>6.3f}s / {(elapsed / 60):>5.1f}m')
+                            f'Time: {step_time:>6.3f}s / {(elapsed / 60):>4.1f}m')
 
                 if self.checkpoint_after_epoch is not None and (epoch + 1) % self.checkpoint_after_epoch == 0:
-                    self.save_models(epoch + 1)
+                    self.save_models(epoch=epoch+1, global_step=global_step)
                     print()
                     print('Models saved.')
 
