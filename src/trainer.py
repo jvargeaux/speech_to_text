@@ -115,7 +115,7 @@ class Trainer():
         print('Dataset Size:', len(self.data))
         print('Model Vocab Size:', self.vocabulary.vocab_size)
         print()
-    
+
     def verify_longest_sequence(self):
         longest = 0
         for item in self.data:
@@ -123,7 +123,7 @@ class Trainer():
                 longest = len(item[0])
         print('Longest sequence length:', longest)
         print('Longest sequence length (after embedding):', longest // 4)
-    
+
     def save_config(self):
         config_path = Path(self.run_path, 'config.json')
         config = { key: value for key, value in vars(Config).items() if not '__' in key }

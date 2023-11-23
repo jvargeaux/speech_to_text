@@ -21,7 +21,7 @@ def clear_runs() -> bool:
         shutil.rmtree(runs_path)
     except OSError as error:
         print(error)
-    
+
     return True
 
 
