@@ -22,7 +22,7 @@ class Config:
     LR_GAMMA = 0.99995
     WEIGHT_DECAY = 1e-4
     NUM_WARMUP_STEPS = 100
-    COOLDOWN = 0  # seconds every step, None = no cooldown
+    COOLDOWN = 0.25  # seconds every step, None = no cooldown
     SPLIT = SPLITS.TRAIN_CLEAN_100.value
     SUBSET = None  # None = all
     CHECKPOINT_PATH = None  # None = don't use

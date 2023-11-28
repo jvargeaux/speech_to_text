@@ -379,7 +379,7 @@ class Trainer():
 
                     # Take random sample from dataset
                     random_index = torch.randint(low=0, high=len(self.data), size=(1,)).item()
-                    random_sample_source = torch.tensor(self.data[random_index][0]).unsqueeze(0)
+                    random_sample_source = torch.tensor(self.data[random_index][0], device=self.device).unsqueeze(0)
                     random_sample_target = self.vocabulary.build_tokenized_target(self.data[random_index][2]).unsqueeze(0)
 
                     # Copy data across batch size
