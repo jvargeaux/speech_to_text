@@ -261,7 +261,7 @@ class Trainer():
         self.check_model_for_randomness()
 
         # Set optimizer and criterion
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, betas=(0.9, 0.98), eps=1e-9,
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr, betas=(0.9, 0.98), eps=1e-9,
                                           weight_decay=self.weight_decay)
         criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1).to(self.device)
 
@@ -276,8 +276,8 @@ class Trainer():
         if self.checkpoint_path is None and self.num_warmup_steps > 0:
             warmup_scheduler = lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=1e-9, end_factor=1.0,
                                                     total_iters=self.num_warmup_steps)
-        training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
-        # training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=num_steps * 2, eta_min=2e-4)
+        # training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
+        training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.num_epochs * num_steps * 2, eta_min=2e-4)
         scheduler = training_scheduler  # SequentialLR uses deprecated pattern, produces warning
 
         # Create tensorboard summary writer
@@ -336,7 +336,7 @@ class Trainer():
                     target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
 
                     # Calculate loss & perform backprop
-                    self.optimizer.zero_grad()
+                    self.optimizer.zero_grad(set_to_none=True)
                     loss = criterion(prediction_flat, target_flat)
                     loss.backward()
                     self.optimizer.step()
