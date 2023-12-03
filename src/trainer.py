@@ -75,6 +75,10 @@ class Trainer():
         self.model = None
         self.optimizer = None
 
+        self.use_amp = True if self.device == 'cuda' else False
+        self.scaler = None
+        self.use_multiple = True
+
     def import_data(self):
         data_path = Path('mfcc', self.split)
         data = []
@@ -280,6 +284,9 @@ class Trainer():
         training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.num_epochs * num_steps * 2, eta_min=2e-4)
         scheduler = training_scheduler  # SequentialLR uses deprecated pattern, produces warning
 
+        # Create grad scaler, becomes no-op if enabled is False
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+
         # Create tensorboard summary writer
         if self.debug:
             self.run_path = Path('runs/debug')
@@ -330,17 +337,21 @@ class Trainer():
                     padded_sources = self.padded_source_from_batch(batch=batch)
                     padded_targets, pad_indices = self.padded_target_from_batch(batch=batch)
 
-                    (out, embedded_source, pos_encoded_source, encoder_out, embedded_target, pos_encoded_target,
-                     target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
+                    # Becomes no-op if self.use_amp is False
+                    # NOTE: passing self.device to device_type gives error, keep on 'cuda' even if device is cpu
+                    with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=self.use_amp):
+                        (out, embedded_source, pos_encoded_source, encoder_out, embedded_target, pos_encoded_target,
+                        target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
 
-                    target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
+                        target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
 
-                    # Calculate loss & perform backprop
-                    self.optimizer.zero_grad(set_to_none=True)
-                    loss = criterion(prediction_flat, target_flat)
-                    loss.backward()
-                    self.optimizer.step()
-                    scheduler.step()
+                        # Calculate loss & perform backprop
+                        self.optimizer.zero_grad(set_to_none=True)
+                        loss = criterion(prediction_flat, target_flat)
+                        self.scaler.scale(loss).backward()
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                        scheduler.step()
 
                     epoch_count += len(batch)
                     epoch_tokens += len(target_flat)
