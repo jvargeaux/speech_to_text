@@ -134,25 +134,30 @@ class Preprocessor():
 
         train_path = Path('mfcc', self.split_train)
         test_path = Path('mfcc', self.split_test)
-        if not train_path.exists():
-            train_path.mkdir(parents=True)
-        if not test_path.exists():
-            test_path.mkdir(parents=True)
+
         print('Hop length:', self.hop_length)
         print('Samples per MFCC:', self.n_fft)
         print('MFCC depth:', self.mfcc_depth)
         print('Processing audio data...')
 
         print('Train data:')
-        progress_bar = ProgressBar()
-        for x, item in enumerate(self.data_train):
-            self.process_audio(item, split=self.split_train)
-            progress_bar.update(x + 1, len(self.data_train))
+        if not train_path.exists():
+            train_path.mkdir(parents=True)
+        if len(list(train_path.glob('*.hdf5'))) == 0:
+            progress_bar = ProgressBar()
+            for x, item in enumerate(self.data_train):
+                self.process_audio(item, split=self.split_train)
+                progress_bar.update(x + 1, len(self.data_train))
+
         print('Test data:')
-        progress_bar = ProgressBar()
-        for x, item in enumerate(self.data_test):
-            self.process_audio(item, split=self.split_test)
-            progress_bar.update(x + 1, len(self.data_test))
+        if not test_path.exists():
+            test_path.mkdir(parents=True)
+        if len(list(test_path.glob('*.hdf5'))) == 0:
+            progress_bar = ProgressBar()
+            for x, item in enumerate(self.data_test):
+                self.process_audio(item, split=self.split_test)
+                progress_bar.update(x + 1, len(self.data_test))
+        
         print('Preprocessing finished.')
 
     def read_preprocessed_data(self):

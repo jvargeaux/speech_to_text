@@ -244,13 +244,13 @@ class Trainer():
         # metrics.add_heatmap(data=decoder_out[0], ylabel='Decoder out')
         # metrics.add_heatmap(data=out[0], ylabel='Out')
         # metrics.draw_heatmaps()
-        # train_writer.add_figure('Heatmaps', plt.gcf(), global_step=global_step)
+        # summary_writer.add_figure('Heatmaps', plt.gcf(), global_step=global_step)
         # plt.clf()
 
         # # Write confusion matrix
         # prediction_flat_collapsed = torch.argmax(prediction_flat, dim=-1)
         # metrics.draw_confusion_matrix(target=target_flat, predicted=prediction_flat_collapsed)
-        # train_writer.add_figure('Confusion Matrix', plt.gcf(), global_step=global_step)
+        # summary_writer.add_figure('Confusion Matrix', plt.gcf(), global_step=global_step)
         # plt.clf()
 
     def train(self):
@@ -312,11 +312,10 @@ class Trainer():
         if not Path.exists(self.run_path):
             Path.mkdir(self.run_path, parents=True)
         self.save_config()
-        train_writer = SummaryWriter(self.run_path)
-        test_writer = SummaryWriter(self.run_path)
+        summary_writer = SummaryWriter(self.run_path)
         graph_source = self.padded_source_from_batch(batch=self.data_train[:self.batch_size])
         graph_target, _ = self.padded_target_from_batch(batch=self.data_train[:self.batch_size])
-        train_writer.add_graph(self.model, (graph_source, graph_target))
+        summary_writer.add_graph(self.model, (graph_source, graph_target))
 
         print_step = num_steps // self.output_lines_per_epoch
         if print_step <= 0:
@@ -385,11 +384,11 @@ class Trainer():
                         tokens_per_sec = epoch_tokens / elapsed
                         avg_loss = epoch_loss / epoch_count
                         word_error_rate = epoch_error / epoch_tokens
-                        train_writer.add_scalar('Metrics/1 WER', word_error_rate, global_step=global_step)
-                        train_writer.add_scalar('Metrics/2 Loss (CE)', avg_loss, global_step=global_step)
-                        train_writer.add_scalar('Metrics/3 LR', scheduler.get_last_lr()[0], global_step=global_step)
-                        train_writer.add_scalar('Performance/Tokens Per Second', tokens_per_sec, global_step=global_step)
-                        train_writer.add_histogram('Vocab Distribution', torch.mean(prediction_flat, dim=0), global_step=global_step)
+                        summary_writer.add_scalar('1 WER/Train', word_error_rate, global_step=global_step)
+                        summary_writer.add_scalar('2 Loss (CE)/Train', avg_loss, global_step=global_step)
+                        summary_writer.add_scalar('3 LR/Train', scheduler.get_last_lr()[0], global_step=global_step)
+                        summary_writer.add_scalar('4 Performance/Train', tokens_per_sec, global_step=global_step)
+                        summary_writer.add_histogram('5 Vocab Distribution/Train', torch.mean(prediction_flat, dim=0), global_step=global_step)
                         print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  |  '
                             f'Step: {(i+1):>4}/{num_steps}  |  '
                             f'Tokens/sec: {tokens_per_sec:>6.1f}  |  '
@@ -434,9 +433,9 @@ class Trainer():
                 test_tokens_per_sec = test_tokens / test_elapsed
                 test_avg_loss = test_loss / test_count
                 test_word_error_rate = test_error / test_tokens
-                test_writer.add_scalar('Metrics/1 WER', test_word_error_rate, global_step=global_step)
-                test_writer.add_scalar('Metrics/2 Loss (CE)', test_avg_loss, global_step=global_step)
-                test_writer.add_scalar('Performance/Tokens Per Second', test_tokens_per_sec, global_step=global_step)
+                summary_writer.add_scalar('1 WER/Test', test_word_error_rate, global_step=global_step)
+                summary_writer.add_scalar('2 Loss (CE)/Test', test_avg_loss, global_step=global_step)
+                summary_writer.add_scalar('4 Performance/Test', test_tokens_per_sec, global_step=global_step)
                 print(f'VALIDATION RESULTS  |  '
                     f'Tokens/sec: {test_tokens_per_sec:>6.1f}  |  '
                     f'Loss: {test_avg_loss:.5f}  |  '
@@ -476,5 +475,5 @@ class Trainer():
         print()
         print('Training finished.')
         print()
-        train_writer.close()
-        test_writer.close()
+        summary_writer.close()
+        summary_writer.close()
