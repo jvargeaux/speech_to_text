@@ -32,6 +32,7 @@ class Trainer():
                  num_epochs: int,
                  lr: float,
                  lr_gamma: float,
+                 lr_min: float,
                  weight_decay: float | None,
                  num_warmup_steps: int | None,
                  output_lines_per_epoch: int,
@@ -39,7 +40,8 @@ class Trainer():
                  checkpoint_path: Path | None,
                  reset_lr: bool,
                  cooldown: int | None,
-                 split: str,
+                 split_train: str,
+                 split_test: str,
                  subset: int | None=None,
                  device: str='cpu',
                  debug=False):
@@ -60,6 +62,7 @@ class Trainer():
         self.num_epochs = num_epochs
         self.lr = lr
         self.lr_gamma = lr_gamma
+        self.lr_min = lr_min
         self.weight_decay = weight_decay
         self.num_warmup_steps = num_warmup_steps
         self.cooldown = cooldown
@@ -67,10 +70,12 @@ class Trainer():
         self.checkpoint_after_epoch = checkpoint_after_epoch
         self.checkpoint_path = checkpoint_path
         self.reset_lr = reset_lr
-        self.split = split
+        self.split_train = split_train
+        self.split_test = split_test
         self.subset = subset
 
-        self.data = []
+        self.data_train = []
+        self.data_test = []
         self.vocabulary = None
         self.model = None
         self.optimizer = None
@@ -80,35 +85,48 @@ class Trainer():
         self.use_multiple = True
 
     def import_data(self):
-        data_path = Path('mfcc', self.split)
-        data = []
-        files = list(data_path.glob('*.hdf5'))
-        if len(files) == 0:
-            print(f'No data folder {data_path} detected. Preprocessing now...')
-            preprocessor = Preprocessor(split=self.split)
+        train_path = Path('mfcc', self.split_train)
+        test_path = Path('mfcc', self.split_test)
+        train_files = list(train_path.glob('*.hdf5'))
+        test_files = list(test_path.glob('*.hdf5'))
+        if len(train_files) == 0 or len(test_files) == 0:
+            print(f'No data folder {train_path} detected. Preprocessing now...')
+            preprocessor = Preprocessor(split_train=self.split_train, split_test=self.split_test)
             preprocessor.preprocess()
-            files = list(data_path.glob('*.hdf5'))
+            train_files = list(train_path.glob('*.hdf5'))
+            test_files = list(test_path.glob('*.hdf5'))
             print()
         if self.subset is not None:
-            files = files[:self.subset]
+            train_files = train_files[:self.subset]
+
         print('Loading mfcc data...')
-        for file in files:
+        data_train = []
+        for file in train_files:
             with h5py.File(file, 'r') as file_data:
-                data.append([file_data['mfccs'][:],
+                data_train.append([file_data['mfccs'][:],
                             file_data['mfccs'].attrs['sample_rate'],
                             file_data['mfccs'].attrs['transcript'],
                             file_data['mfccs'].attrs['speaker_id']])
-        self.data = data
+        self.data_train = data_train
+        data_test = []
+        for file in test_files:
+            with h5py.File(file, 'r') as file_data:
+                data_test.append([file_data['mfccs'][:],
+                            file_data['mfccs'].attrs['sample_rate'],
+                            file_data['mfccs'].attrs['transcript'],
+                            file_data['mfccs'].attrs['speaker_id']])
+        self.data_test = data_test
         print('Data loaded.')
         print()
 
     def build_vocabulary(self):
         print('Building vocabulary...')
-        transcripts = [item[2] for item in self.data]
+        transcripts = [item[2] for item in self.data_train]
         self.vocabulary = Vocabulary(batch=transcripts, max_size=self.max_vocab_size, device=self.device)
         print('Vocabulary built.')
         print()
-        print('Dataset Size:', len(self.data))
+        print('Dataset Size (Train):', len(self.data_train))
+        print('Dataset Size (Test):', len(self.data_test))
         print('Model Vocab Size:', self.vocabulary.vocab_size)
         print()
 
@@ -118,13 +136,14 @@ class Trainer():
         self.vocabulary = Vocabulary(vocab=torch.load(vocabulary_path), device=self.device)
         print('Vocabulary loaded.')
         print()
-        print('Dataset Size:', len(self.data))
+        print('Dataset Size (Train):', len(self.data_train))
+        print('Dataset Size (Test):', len(self.data_test))
         print('Model Vocab Size:', self.vocabulary.vocab_size)
         print()
 
     def verify_longest_sequence(self):
         longest = 0
-        for item in self.data:
+        for item in self.data_train:
             if len(item[0]) > longest:
                 longest = len(item[0])
         print('Longest sequence length:', longest)
@@ -225,13 +244,13 @@ class Trainer():
         # metrics.add_heatmap(data=decoder_out[0], ylabel='Decoder out')
         # metrics.add_heatmap(data=out[0], ylabel='Out')
         # metrics.draw_heatmaps()
-        # summary_writer.add_figure('Heatmaps', plt.gcf(), global_step=global_step)
+        # train_writer.add_figure('Heatmaps', plt.gcf(), global_step=global_step)
         # plt.clf()
 
         # # Write confusion matrix
         # prediction_flat_collapsed = torch.argmax(prediction_flat, dim=-1)
         # metrics.draw_confusion_matrix(target=target_flat, predicted=prediction_flat_collapsed)
-        # summary_writer.add_figure('Confusion Matrix', plt.gcf(), global_step=global_step)
+        # train_writer.add_figure('Confusion Matrix', plt.gcf(), global_step=global_step)
         # plt.clf()
 
     def train(self):
@@ -252,7 +271,8 @@ class Trainer():
             self.build_vocabulary()
 
         # Prepare training data
-        train_loader = DataLoader(dataset=self.data, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
+        train_loader = DataLoader(dataset=self.data_train, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
+        test_loader = DataLoader(dataset=self.data_test, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
         num_steps = len(train_loader)
 
         # Build model
@@ -281,27 +301,22 @@ class Trainer():
             warmup_scheduler = lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=1e-9, end_factor=1.0,
                                                     total_iters=self.num_warmup_steps)
         # training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
-        # training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.num_epochs * num_steps * 2, eta_min=2e-4)
-        training_scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=self.optimizer, factor=1e-4, patience=1)
+        training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.num_epochs * num_steps * 2, eta_min=self.lr_min)
+        # training_scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=self.optimizer, factor=1e-4, patience=1)
         scheduler = training_scheduler  # SequentialLR uses deprecated pattern, produces warning
 
         # Create grad scaler, becomes no-op if enabled is False
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
         # Create tensorboard summary writer
-        if self.debug:
-            self.run_path = Path('runs/debug')
         if not Path.exists(self.run_path):
             Path.mkdir(self.run_path, parents=True)
         self.save_config()
-        summary_writer = SummaryWriter(self.run_path)
-        graph_source = self.padded_source_from_batch(batch=self.data[:self.batch_size])
-        graph_target, _ = self.padded_target_from_batch(batch=self.data[:self.batch_size])
-        summary_writer.add_graph(self.model, (graph_source, graph_target))
-
-        if self.debug:
-            self.num_epochs = 1
-            train_loader = DataLoader(dataset=self.data[4:8], batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
+        train_writer = SummaryWriter(self.run_path)
+        test_writer = SummaryWriter(self.run_path)
+        graph_source = self.padded_source_from_batch(batch=self.data_train[:self.batch_size])
+        graph_target, _ = self.padded_target_from_batch(batch=self.data_train[:self.batch_size])
+        train_writer.add_graph(self.model, (graph_source, graph_target))
 
         print_step = num_steps // self.output_lines_per_epoch
         if print_step <= 0:
@@ -328,6 +343,7 @@ class Trainer():
                 epoch_loss = 0
                 epoch_error = 0
 
+                # Train
                 for i, batch in enumerate(train_loader):
                     global_step = start_step + (epoch * num_steps + i + 1)
                     if self.checkpoint_path is None and self.num_warmup_steps > 0 and global_step <= self.num_warmup_steps:
@@ -369,11 +385,11 @@ class Trainer():
                         tokens_per_sec = epoch_tokens / elapsed
                         avg_loss = epoch_loss / epoch_count
                         word_error_rate = epoch_error / epoch_tokens
-                        summary_writer.add_scalar('Metrics/1 WER', word_error_rate, global_step=global_step)
-                        summary_writer.add_scalar('Metrics/2 Loss (CE)', avg_loss, global_step=global_step)
-                        summary_writer.add_scalar('Metrics/3 LR', scheduler.get_last_lr()[0], global_step=global_step)
-                        summary_writer.add_scalar('Performance/Tokens Per Second', tokens_per_sec, global_step=global_step)
-                        summary_writer.add_histogram('Vocab Distribution', torch.mean(prediction_flat, dim=0), global_step=global_step)
+                        train_writer.add_scalar('Metrics/1 WER', word_error_rate, global_step=global_step)
+                        train_writer.add_scalar('Metrics/2 Loss (CE)', avg_loss, global_step=global_step)
+                        train_writer.add_scalar('Metrics/3 LR', scheduler.get_last_lr()[0], global_step=global_step)
+                        train_writer.add_scalar('Performance/Tokens Per Second', tokens_per_sec, global_step=global_step)
+                        train_writer.add_histogram('Vocab Distribution', torch.mean(prediction_flat, dim=0), global_step=global_step)
                         print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  |  '
                             f'Step: {(i+1):>4}/{num_steps}  |  '
                             f'Tokens/sec: {tokens_per_sec:>6.1f}  |  '
@@ -382,17 +398,62 @@ class Trainer():
                             f'LR: {scheduler.get_last_lr()[0]:.2e}  |  '
                             f'Time: {step_time:>6.3f}s / {(elapsed / 60):>4.1f}m')
 
+                # Test (Validation)
+                print('Running validation...')
+                test_start = time.time()
+                test_count = 0
+                test_tokens = 0
+                test_loss = 0
+                test_error = 0
+                self.model.eval()
+                for i, batch in enumerate(test_loader):
+                    padded_sources = self.padded_source_from_batch(batch=batch)
+                    padded_targets, pad_indices = self.padded_target_from_batch(batch=batch)
+
+                    # Becomes no-op if self.use_amp is False
+                    # NOTE: passing self.device to device_type gives error, keep on 'cuda' even if device is cpu
+                    with torch.no_grad():
+                        (out, embedded_source, pos_encoded_source, encoder_out, embedded_target, pos_encoded_target,
+                        target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
+
+                        target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
+
+                        loss = criterion(prediction_flat, target_flat)
+
+                    test_count += len(batch)
+                    test_tokens += len(target_flat)
+                    test_loss += loss.item()
+                    prediction_indices = torch.argmax(prediction_flat, dim=-1)
+                    test_error += torch.sum((prediction_indices != target_flat).float()).item()
+
+                    if self.cooldown is not None and self.cooldown > 0:
+                        time.sleep(self.cooldown)
+
+                test_elapsed = time.time() - test_start
+                test_step_time = test_elapsed / (i + 1)
+                test_tokens_per_sec = test_tokens / test_elapsed
+                test_avg_loss = test_loss / test_count
+                test_word_error_rate = test_error / test_tokens
+                test_writer.add_scalar('Metrics/1 WER', test_word_error_rate, global_step=global_step)
+                test_writer.add_scalar('Metrics/2 Loss (CE)', test_avg_loss, global_step=global_step)
+                test_writer.add_scalar('Performance/Tokens Per Second', test_tokens_per_sec, global_step=global_step)
+                print(f'VALIDATION RESULTS  |  '
+                    f'Tokens/sec: {test_tokens_per_sec:>6.1f}  |  '
+                    f'Loss: {test_avg_loss:.5f}  |  '
+                    f'WER: {test_word_error_rate:>6.1%}  |  '
+                    f'Time: {test_step_time:>6.3f}s / {(test_elapsed / 60):>4.1f}m')
+                self.model.train()
+
                 if self.checkpoint_after_epoch is not None and (epoch + 1) % self.checkpoint_after_epoch == 0:
                     self.save_models(epoch=epoch+1, global_step=global_step)
                     print()
                     print('Models saved.')
-
                     self.model.eval()
 
                     # Take random sample from dataset
-                    random_index = torch.randint(low=0, high=len(self.data), size=(1,)).item()
-                    random_sample_source = torch.tensor(self.data[random_index][0], device=self.device).unsqueeze(0)
-                    random_sample_target = self.vocabulary.build_tokenized_target(self.data[random_index][2]).unsqueeze(0)
+                    random_index = torch.randint(low=0, high=len(self.data_train), size=(1,)).item()
+                    random_sample_source = torch.tensor(self.data_train[random_index][0], device=self.device).unsqueeze(0)
+                    random_sample_target = self.vocabulary.build_tokenized_target(self.data_train[random_index][2]).unsqueeze(0)
 
                     # Copy data across batch size
                     random_sample_source = random_sample_source.expand((self.batch_size, random_sample_source.shape[1], random_sample_source.shape[2]))
@@ -415,4 +476,5 @@ class Trainer():
         print()
         print('Training finished.')
         print()
-        summary_writer.close()
+        train_writer.close()
+        test_writer.close()

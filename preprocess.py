@@ -34,32 +34,35 @@ class Preprocessor():
     Arguments
     - dataset_url: Name of dataset split, check SPLITS enum for options
     '''
-    def __init__(self, split: str=SPLITS.DEV_CLEAN.value):
+    def __init__(self, split_train: str=SPLITS.DEV_CLEAN.value, split_test: str=SPLITS.TEST_CLEAN.value):
         # Set MFCC meta parameters
         self.hop_length = Config.HOP_LENGTH  # number of samples to shift
         self.n_fft = Config.N_FFT  # number of samples per fft (window size)
         self.mfcc_depth = Config.MFCC_DEPTH
 
-        self.data = None
-        self.split = split
-        print('Dataset split:', split)
+        self.data_train = None
+        self.data_test = None
+        self.split_train = split_train
+        self.split_test = split_test
+        print('Dataset train split:', split_train)
+        print('Dataset test split:', split_test)
         self.download_dataset()
 
     def download_dataset(self):
-        if self.split not in [item.value for item in SPLITS]:
-            print('Invalid split name. Check splits.py for options.')
+        if self.split_train not in [item.value for item in SPLITS] or self.split_test not in [item.value for item in SPLITS]:
+            print('Invalid train or test split name. Check splits.py for options.')
             return
         data_path = Path('data')
         if not data_path.exists():
             data_path.mkdir(parents=True)
         # Updated dataset from LibriLightLimited -> LibriSpeech (same format)
-        data = torchaudio.datasets.LIBRISPEECH(root=data_path, url=self.split, download=True)
-        self.data = data
+        self.data_train = torchaudio.datasets.LIBRISPEECH(root=data_path, url=self.split_train, download=True)
+        self.data_test = torchaudio.datasets.LIBRISPEECH(root=data_path, url=self.split_test, download=True)
 
     def show_test_data(self, index: int=0, waveform=False, spectrogram=False, mfcc=False, play=False):
-        if self.data is None:
+        if self.data_train is None:
             return
-        test = self.data.__getitem__(index)
+        test = self.data_train.__getitem__(index)
         samples, sample_rate, transcript, speaker_id, chapter_id, utterance_id = test
         samples = samples.numpy()
 
@@ -109,14 +112,14 @@ class Preprocessor():
             plt.colorbar()
             plt.show()
 
-    def process_audio(self, item):
+    def process_audio(self, item, split: str):
         samples, sample_rate, transcript, speaker_id, chapter_id, utterance_id = item
 
         mfccs = librosa.feature.mfcc(y=samples.numpy(), n_fft=self.n_fft, hop_length=self.hop_length, n_mfcc=self.mfcc_depth)
         mfcc_bands = mfccs[0]
         mfcc_frames = mfcc_bands.T  # (num_bands, num_frames) -> (num_frames, num_bands)
 
-        with h5py.File(Path('mfcc', self.split, f'{speaker_id}_{chapter_id}_{utterance_id}.hdf5'), 'w') as file:
+        with h5py.File(Path('mfcc', split, f'{speaker_id}_{chapter_id}_{utterance_id}.hdf5'), 'w') as file:
             dataset = file.create_dataset('mfccs', data=mfcc_frames)
             dataset.attrs['speaker_id'] = speaker_id
             dataset.attrs['chapter_id'] = chapter_id
@@ -125,26 +128,35 @@ class Preprocessor():
             dataset.attrs['transcript'] = transcript
 
     def preprocess(self):
-        if self.data is None:
+        if self.data_train is None or self.data_test is None:
             print('Data is empty. Aborted.')
             return
 
-        mfcc_path = Path('mfcc', self.split)
-        if not mfcc_path.exists():
-            mfcc_path.mkdir(parents=True)
+        train_path = Path('mfcc', self.split_train)
+        test_path = Path('mfcc', self.split_test)
+        if not train_path.exists():
+            train_path.mkdir(parents=True)
+        if not test_path.exists():
+            test_path.mkdir(parents=True)
         print('Hop length:', self.hop_length)
         print('Samples per MFCC:', self.n_fft)
         print('MFCC depth:', self.mfcc_depth)
         print('Processing audio data...')
 
+        print('Train data:')
         progress_bar = ProgressBar()
-        for x, item in enumerate(self.data):
-            self.process_audio(item)
-            progress_bar.update(x + 1, len(self.data))
+        for x, item in enumerate(self.data_train):
+            self.process_audio(item, split=self.split_train)
+            progress_bar.update(x + 1, len(self.data_train))
+        print('Test data:')
+        progress_bar = ProgressBar()
+        for x, item in enumerate(self.data_test):
+            self.process_audio(item, split=self.split_test)
+            progress_bar.update(x + 1, len(self.data_test))
         print('Preprocessing finished.')
 
     def read_preprocessed_data(self):
-        files = list(Path('mfcc', self.split).glob('*.hdf5'))
+        files = list(Path('mfcc', self.split_train).glob('*.hdf5'))
         for file in files[:5]:
             with h5py.File(file, 'r') as file_data:
                 mfccs_dataset = file_data['mfccs']
@@ -159,8 +171,10 @@ def main():
         description='Preprocess audio for the S2T transformer neural network',
         epilog='Epilogue sample text')
 
-    default_split = SPLITS.TRAIN_CLEAN_100.value
-    parser.add_argument('--split', type=str, nargs='?', default=default_split, help='Name of dataset split to preprocess')
+    default_split_train = SPLITS.TRAIN_CLEAN_100.value
+    default_split_test = SPLITS.TEST_CLEAN.value
+    parser.add_argument('--split_train', type=str, nargs='?', default=default_split_train, help='Name of dataset split for training')
+    parser.add_argument('--split_test', type=str, nargs='?', default=default_split_test, help='Name of dataset split for testing (validation)')
     parser.add_argument('-d', '--display', type=int, default=-1, help='Index of one data sample to display')
     parser.add_argument('-w', '--waveform', action='store_true', help='Display waveform')
     parser.add_argument('-s', '--spectrogram', action='store_true', help='Display spectrogram')
@@ -170,7 +184,7 @@ def main():
 
     args = parser.parse_args()
 
-    preprocessor = Preprocessor(split=args.split)
+    preprocessor = Preprocessor(split_train=args.split_train, split_test=args.split_test)
 
     if args.display != -1:
         preprocessor.show_test_data(

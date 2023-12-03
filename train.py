@@ -54,6 +54,8 @@ def main():
                         default=Config.LR, help='Base learning rate')
     parser.add_argument('--lr_gamma', '-lg', type=float, nargs='?',
                         default=Config.LR_GAMMA, help='Gamma for learning rate scheduler')
+    parser.add_argument('--lr_min', '-lm', type=float, nargs='?',
+                        default=Config.LR_MIN, help='Min LR for learning rate scheduler')
     parser.add_argument('--weight_decay', '-wd', type=float, nargs='?',
                         default=Config.WEIGHT_DECAY, help='Weight decay (L2 penalty) for optimizer')
     parser.add_argument('--num_warmup_steps', '-nw', type=int, nargs='?',
@@ -68,8 +70,10 @@ def main():
                         default=Config.CHECKPOINT_PATH, help='Save model checkpoint & sample prediction after x number of epochs')
     parser.add_argument('--reset_lr', action='store_true', default=Config.RESET_LR,
                         help='Should reset optimizer when loading checkpoint')
-    parser.add_argument('--split', '-s', type=str,
-                        default=Config.SPLIT, help='Name of dataset split to use')
+    parser.add_argument('--split_train', '-st', type=str,
+                        default=Config.SPLIT_TRAIN, help='Name of dataset split for training')
+    parser.add_argument('--split_test', '-sv', type=str,
+                        default=Config.SPLIT_TEST, help='Name of dataset split for testing (validation)')
     parser.add_argument('--subset', '-sub', type=int, nargs='?',
                         default=Config.SUBSET, help='Use a smaller subset with x number of files. None = use all')
     parser.add_argument('--debug', action='store_true', help='Run through only one training example for debugging')
@@ -102,10 +106,12 @@ def main():
     print('Max sequence length:', args.max_length)
     print('Max vocab size:', args.max_vocab_size)
     print('Dropout probability:', args.dropout)
-    print('Split:', args.split)
+    print('Split (train):', args.split_train)
+    print('Split (test):', args.split_test)
     print('Subset:', args.subset)
-    print('Learning rate:', args.lr)
+    print('LR:', args.lr)
     print('LR gamma:', args.lr_gamma)
+    print('LR min:', args.lr_min)
     print('Weight decay:', args.weight_decay)
     print('Num warmup steps:', args.num_warmup_steps)
     print('Cooldown:', args.cooldown)
@@ -129,6 +135,7 @@ def main():
                       num_epochs=args.num_epochs,
                       lr=args.lr,
                       lr_gamma=args.lr_gamma,
+                      lr_min=args.lr_min,
                       weight_decay=args.weight_decay,
                       num_warmup_steps=args.num_warmup_steps,
                       cooldown=args.cooldown,
@@ -136,7 +143,8 @@ def main():
                       checkpoint_after_epoch=args.checkpoint_after_epoch,
                       checkpoint_path=args.checkpoint_path,
                       reset_lr=args.reset_lr,
-                      split=args.split,
+                      split_train=args.split_train,
+                      split_test=args.split_test,
                       subset=args.subset)
     trainer.train()
 

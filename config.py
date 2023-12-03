@@ -13,21 +13,23 @@ class Config:
     DROPOUT = 0.1
     MAX_LENGTH = 500  # 50 per second = 10s total  |  audio encoder x4 compression = 40s max
     MAX_VOCAB_SIZE = 10000
-    NUM_LAYERS = 2
-    BATCH_SIZE = 8
+    NUM_LAYERS = 4
+    BATCH_SIZE = 64
 
     # Training
-    NUM_EPOCHS = 20
+    NUM_EPOCHS = 40
     LR = 8e-4
     LR_GAMMA = 0.99995
-    WEIGHT_DECAY = 1e-3
+    LR_MIN = 1e-7
+    WEIGHT_DECAY = 1e-4
     NUM_WARMUP_STEPS = 100
     COOLDOWN = 0  # seconds every step, None = no cooldown
-    SPLIT = SPLITS.TRAIN_CLEAN_100.value
+    SPLIT_TRAIN = SPLITS.TRAIN_CLEAN_100.value
+    SPLIT_TEST = SPLITS.TEST_CLEAN.value
     SUBSET = None  # None = all
     CHECKPOINT_PATH = None  # None = don't use
     RESET_LR = True
 
     # Output
-    OUTPUT_LINES_PER_EPOCH = 400
+    OUTPUT_LINES_PER_EPOCH = 100
     CHECKPOINT_AFTER_EPOCH = 1
