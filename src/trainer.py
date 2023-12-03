@@ -281,7 +281,8 @@ class Trainer():
             warmup_scheduler = lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=1e-9, end_factor=1.0,
                                                     total_iters=self.num_warmup_steps)
         # training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
-        training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.num_epochs * num_steps * 2, eta_min=2e-4)
+        # training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.num_epochs * num_steps * 2, eta_min=2e-4)
+        training_scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=self.optimizer, factor=1e-4, patience=1)
         scheduler = training_scheduler  # SequentialLR uses deprecated pattern, produces warning
 
         # Create grad scaler, becomes no-op if enabled is False
