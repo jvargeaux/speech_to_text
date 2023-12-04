@@ -58,7 +58,7 @@ class Trainer():
         # Training
         self.device = device
         self.debug = debug
-        self.run_path = Path(f'runs/{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}')
+        self.run_path = Path('runs', datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
         self.num_epochs = num_epochs
         self.lr = lr
         self.lr_gamma = lr_gamma
@@ -244,13 +244,13 @@ class Trainer():
         # metrics.add_heatmap(data=decoder_out[0], ylabel='Decoder out')
         # metrics.add_heatmap(data=out[0], ylabel='Out')
         # metrics.draw_heatmaps()
-        # summary_writer.add_figure('Heatmaps', plt.gcf(), global_step=global_step)
+        # train_writer.add_figure('Heatmaps', plt.gcf(), global_step=global_step)
         # plt.clf()
 
         # # Write confusion matrix
         # prediction_flat_collapsed = torch.argmax(prediction_flat, dim=-1)
         # metrics.draw_confusion_matrix(target=target_flat, predicted=prediction_flat_collapsed)
-        # summary_writer.add_figure('Confusion Matrix', plt.gcf(), global_step=global_step)
+        # train_writer.add_figure('Confusion Matrix', plt.gcf(), global_step=global_step)
         # plt.clf()
 
     def train(self):
@@ -300,8 +300,10 @@ class Trainer():
         if self.checkpoint_path is None and self.num_warmup_steps > 0:
             warmup_scheduler = lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=1e-9, end_factor=1.0,
                                                     total_iters=self.num_warmup_steps)
-        # training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
-        training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer, T_max=self.num_epochs * num_steps * 2, eta_min=self.lr_min)
+        training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
+        # training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer,
+        #                                                     T_max=(self.num_epochs * num_steps) - self.num_warmup_steps,
+        #                                                     eta_min=self.lr_min)
         # training_scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=self.optimizer, factor=1e-4, patience=1)
         scheduler = training_scheduler  # SequentialLR uses deprecated pattern, produces warning
 
@@ -309,13 +311,17 @@ class Trainer():
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
         # Create tensorboard summary writer
+        test_path = Path(self.run_path, 'test')
         if not Path.exists(self.run_path):
             Path.mkdir(self.run_path, parents=True)
+        if not Path.exists(test_path):
+            Path.mkdir(test_path, parents=True)
         self.save_config()
-        summary_writer = SummaryWriter(self.run_path)
+        train_writer = SummaryWriter(self.run_path)
+        test_writer = SummaryWriter(test_path)
         graph_source = self.padded_source_from_batch(batch=self.data_train[:self.batch_size])
         graph_target, _ = self.padded_target_from_batch(batch=self.data_train[:self.batch_size])
-        summary_writer.add_graph(self.model, (graph_source, graph_target))
+        train_writer.add_graph(self.model, (graph_source, graph_target))
 
         print_step = num_steps // self.output_lines_per_epoch
         if print_step <= 0:
@@ -384,11 +390,11 @@ class Trainer():
                         tokens_per_sec = epoch_tokens / elapsed
                         avg_loss = epoch_loss / epoch_count
                         word_error_rate = epoch_error / epoch_tokens
-                        summary_writer.add_scalar('1 WER/Train', word_error_rate, global_step=global_step)
-                        summary_writer.add_scalar('2 Loss (CE)/Train', avg_loss, global_step=global_step)
-                        summary_writer.add_scalar('3 LR/Train', scheduler.get_last_lr()[0], global_step=global_step)
-                        summary_writer.add_scalar('4 Performance/Train', tokens_per_sec, global_step=global_step)
-                        summary_writer.add_histogram('5 Vocab Distribution/Train', torch.mean(prediction_flat, dim=0), global_step=global_step)
+                        train_writer.add_scalar('1 WER/Train', word_error_rate, global_step=global_step)
+                        train_writer.add_scalar('2 Loss (CE)/Train', avg_loss, global_step=global_step)
+                        train_writer.add_scalar('3 LR/Train', scheduler.get_last_lr()[0], global_step=global_step)
+                        train_writer.add_scalar('4 Performance/Train', tokens_per_sec, global_step=global_step)
+                        train_writer.add_histogram('5 Vocab Distribution/Train', torch.mean(prediction_flat, dim=0), global_step=global_step)
                         print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  |  '
                             f'Step: {(i+1):>4}/{num_steps}  |  '
                             f'Tokens/sec: {tokens_per_sec:>6.1f}  |  '
@@ -419,11 +425,11 @@ class Trainer():
 
                         loss = criterion(prediction_flat, target_flat)
 
-                    test_count += len(batch)
-                    test_tokens += len(target_flat)
-                    test_loss += loss.item()
-                    prediction_indices = torch.argmax(prediction_flat, dim=-1)
-                    test_error += torch.sum((prediction_indices != target_flat).float()).item()
+                        test_count += len(batch)
+                        test_tokens += len(target_flat)
+                        test_loss += loss.item()
+                        prediction_indices = torch.argmax(prediction_flat, dim=-1)
+                        test_error += torch.sum((prediction_indices != target_flat).float()).item()
 
                     if self.cooldown is not None and self.cooldown > 0:
                         time.sleep(self.cooldown)
@@ -433,9 +439,9 @@ class Trainer():
                 test_tokens_per_sec = test_tokens / test_elapsed
                 test_avg_loss = test_loss / test_count
                 test_word_error_rate = test_error / test_tokens
-                summary_writer.add_scalar('1 WER/Test', test_word_error_rate, global_step=global_step)
-                summary_writer.add_scalar('2 Loss (CE)/Test', test_avg_loss, global_step=global_step)
-                summary_writer.add_scalar('4 Performance/Test', test_tokens_per_sec, global_step=global_step)
+                test_writer.add_scalar('1 WER/Test', test_word_error_rate, global_step=global_step)
+                test_writer.add_scalar('2 Loss (CE)/Test', test_avg_loss, global_step=global_step)
+                test_writer.add_scalar('4 Performance/Test', test_tokens_per_sec, global_step=global_step)
                 print(f'VALIDATION RESULTS  |  '
                     f'Tokens/sec: {test_tokens_per_sec:>6.1f}  |  '
                     f'Loss: {test_avg_loss:.5f}  |  '
@@ -475,5 +481,5 @@ class Trainer():
         print()
         print('Training finished.')
         print()
-        summary_writer.close()
-        summary_writer.close()
+        train_writer.close()
+        test_writer.close()

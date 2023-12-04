@@ -9,19 +9,19 @@ class Config:
 
     # Model
     D_MODEL = 512
-    NUM_HEADS = 4
-    DROPOUT = 0.1
+    NUM_HEADS = 8
+    DROPOUT = None
     MAX_LENGTH = 500  # 50 per second = 10s total  |  audio encoder x4 compression = 40s max
-    MAX_VOCAB_SIZE = 10000
+    MAX_VOCAB_SIZE = 18000
     NUM_LAYERS = 4
-    BATCH_SIZE = 64
+    BATCH_SIZE = 32
 
     # Training
     NUM_EPOCHS = 40
     LR = 8e-4
-    LR_GAMMA = 0.99995
+    LR_GAMMA = 0.9999
     LR_MIN = 1e-7
-    WEIGHT_DECAY = 1e-4
+    WEIGHT_DECAY = 1e-3
     NUM_WARMUP_STEPS = 100
     COOLDOWN = 0  # seconds every step, None = no cooldown
     SPLIT_TRAIN = SPLITS.TRAIN_CLEAN_100.value
@@ -31,5 +31,5 @@ class Config:
     RESET_LR = True
 
     # Output
-    OUTPUT_LINES_PER_EPOCH = 100
+    OUTPUT_LINES_PER_EPOCH = 40
     CHECKPOINT_AFTER_EPOCH = 1
