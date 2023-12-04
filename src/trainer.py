@@ -390,11 +390,11 @@ class Trainer():
                         tokens_per_sec = epoch_tokens / elapsed
                         avg_loss = epoch_loss / epoch_count
                         word_error_rate = epoch_error / epoch_tokens
-                        train_writer.add_scalar('1 WER/Train', word_error_rate, global_step=global_step)
-                        train_writer.add_scalar('2 Loss (CE)/Train', avg_loss, global_step=global_step)
-                        train_writer.add_scalar('3 LR/Train', scheduler.get_last_lr()[0], global_step=global_step)
-                        train_writer.add_scalar('4 Performance/Train', tokens_per_sec, global_step=global_step)
-                        train_writer.add_histogram('5 Vocab Distribution/Train', torch.mean(prediction_flat, dim=0), global_step=global_step)
+                        train_writer.add_scalar('Metrics/1 WER', word_error_rate, global_step=global_step)
+                        train_writer.add_scalar('Metrics/2 Loss (CE)', avg_loss, global_step=global_step)
+                        train_writer.add_scalar('Metrics/3 LR', scheduler.get_last_lr()[0], global_step=global_step)
+                        train_writer.add_scalar('Performance/Tokens Per Second', tokens_per_sec, global_step=global_step)
+                        train_writer.add_histogram('Vocab Distribution', torch.mean(prediction_flat, dim=0), global_step=global_step)
                         print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  |  '
                             f'Step: {(i+1):>4}/{num_steps}  |  '
                             f'Tokens/sec: {tokens_per_sec:>6.1f}  |  '
@@ -435,18 +435,16 @@ class Trainer():
                         time.sleep(self.cooldown)
 
                 test_elapsed = time.time() - test_start
-                test_step_time = test_elapsed / (i + 1)
                 test_tokens_per_sec = test_tokens / test_elapsed
                 test_avg_loss = test_loss / test_count
                 test_word_error_rate = test_error / test_tokens
-                test_writer.add_scalar('1 WER/Test', test_word_error_rate, global_step=global_step)
-                test_writer.add_scalar('2 Loss (CE)/Test', test_avg_loss, global_step=global_step)
-                test_writer.add_scalar('4 Performance/Test', test_tokens_per_sec, global_step=global_step)
+                test_writer.add_scalar('Metrics/1 WER', test_word_error_rate, global_step=global_step)
+                test_writer.add_scalar('Metrics/2 Loss (CE)', test_avg_loss, global_step=global_step)
+                test_writer.add_scalar('Performance/Tokens Per Second', test_tokens_per_sec, global_step=global_step)
                 print(f'VALIDATION RESULTS  |  '
-                    f'Tokens/sec: {test_tokens_per_sec:>6.1f}  |  '
                     f'Loss: {test_avg_loss:.5f}  |  '
                     f'WER: {test_word_error_rate:>6.1%}  |  '
-                    f'Time: {test_step_time:>6.3f}s / {(test_elapsed / 60):>4.1f}m')
+                    f'Time: {test_elapsed:>4.2f}s')
                 self.model.train()
 
                 if self.checkpoint_after_epoch is not None and (epoch + 1) % self.checkpoint_after_epoch == 0:
