@@ -279,7 +279,11 @@ class Trainer():
         self.model = Transformer(vocabulary=self.vocabulary, d_model=self.d_model, batch_size=self.batch_size,
                                  dropout=self.dropout, num_heads=self.num_heads, max_length=self.max_length,
                                  num_layers=self.num_layers, device=self.device, mfcc_depth=self.mfcc_depth,
-                                 debug=self.debug).to(self.device)
+                                 debug=self.debug)
+        if torch.cuda.device_count() > 1:
+            print('Multiple GPUs detected. GPU count:', torch.cuda.device_count())
+            self.model = torch.nn.DataParallel(self.model)
+        self.model.to(self.device)
         if self.checkpoint_path is not None:
             self.model.load_state_dict(torch.load(Path(self.checkpoint_path, 'model.pt')))
         self.check_model_for_randomness()

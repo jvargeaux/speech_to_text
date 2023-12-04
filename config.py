@@ -13,7 +13,7 @@ class Config:
     DROPOUT = None
     MAX_LENGTH = 500  # 50 per second = 10s total  |  audio encoder x4 compression = 40s max
     MAX_VOCAB_SIZE = 18000
-    NUM_LAYERS = 4
+    NUM_LAYERS = 3
     BATCH_SIZE = 32
 
     # Training
