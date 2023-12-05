@@ -479,7 +479,7 @@ class Transformer(nn.Module):
     share a common weight matrix.
     '''
     def __init__(self, vocabulary: Vocabulary, d_model: int, batch_size: int, num_layers: int, dropout: float,
-                 num_heads: int, max_length: int, mfcc_depth: int, device, debug = False):
+                 num_heads: int, max_source_length: int, max_target_length: int, mfcc_depth: int, device, debug = False):
         super().__init__()
         self.vocabulary = vocabulary
         vocab_size = vocabulary.vocab_size
@@ -488,11 +488,11 @@ class Transformer(nn.Module):
         self.debug = debug
         self.audio_embedder = AudioEmbedder1d(embed_dim=d_model, device=device, mfcc_depth=mfcc_depth)
         self.word_embeddings = WordEmbedder(vocab_size=vocab_size, d_model=d_model)
-        self.positional_encoding = PositionalEncoding(d_model=d_model, dropout=dropout, max_length=max_length)
+        self.positional_encoding = PositionalEncoding(d_model=d_model, dropout=dropout, max_length=max_source_length)
         self.encoder = Encoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
         self.decoder = Decoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
         self.linear = nn.Linear(d_model, vocab_size)
-        self.target_mask = TargetMask(batch_size=batch_size, max_length=max_length, device=device)
+        self.target_mask = TargetMask(batch_size=batch_size, max_length=max_target_length, device=device)
         self.pad_token_tensor = self.vocabulary.get_tensor_from_sequence(self.vocabulary.pad_token)
 
     def source_mask(self, source: Tensor):

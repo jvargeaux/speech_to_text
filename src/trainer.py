@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 from splits import SPLITS
 from preprocess import Preprocessor
 from config import Config
-from src.transformer import Transformer
+from src.model import Transformer
 from src.vocabulary import Vocabulary
 from src.metrics import Metrics
 
@@ -26,7 +26,8 @@ class Trainer():
                  batch_size: int,
                  dropout: float,
                  num_heads: int,
-                 max_length: int,
+                 max_source_length: int,
+                 max_target_length: int,
                  max_vocab_size: int | None,
                  mfcc_depth: int,
                  num_epochs: int,
@@ -50,7 +51,8 @@ class Trainer():
         self.num_layers = num_layers
         self.dropout = dropout
         self.num_heads = num_heads
-        self.max_length = max_length
+        self.max_source_length = max_source_length
+        self.max_target_length = max_target_length
         self.max_vocab_size = max_vocab_size
         self.batch_size = batch_size
         self.mfcc_depth = mfcc_depth
@@ -98,6 +100,7 @@ class Trainer():
             print()
         if self.subset is not None:
             train_files = train_files[:self.subset]
+        test_files = test_files[:64]
 
         print('Loading mfcc data...')
         data_train = []
@@ -142,12 +145,24 @@ class Trainer():
         print()
 
     def verify_longest_sequence(self):
-        longest = 0
+        longest_source_train = 0
+        longest_target_train = 0
+        longest_source_test = 0
+        longest_target_test = 0
         for item in self.data_train:
-            if len(item[0]) > longest:
-                longest = len(item[0])
-        print('Longest sequence length:', longest)
-        print('Longest sequence length (after embedding):', longest // 4)
+            if len(item[0]) > longest_source_train:
+                longest_source_train = len(item[0])
+            if len(item[2]) > longest_target_train:
+                longest_target_train = len(item[2])
+        for item in self.data_test:
+            if len(item[0]) > longest_source_test:
+                longest_source_test = len(item[0])
+            if len(item[2]) > longest_target_test:
+                longest_target_test = len(item[2])
+        print('Longest source length (train):', f'{longest_source_train} (compressed 4x to {longest_source_train // 4})')
+        print('Longest target length (train):', longest_target_train)
+        print('Longest source length (test):', f'{longest_source_test} (compressed 4x to {longest_source_test // 4})')
+        print('Longest target length (test):', longest_target_test)
 
     def save_config(self):
         config_path = Path(self.run_path, 'config.json')
@@ -172,8 +187,9 @@ class Trainer():
 
     def padded_source_from_batch(self, batch) -> Tensor:
         mfcc_dim = len(batch[0][0][0])
-        lengths = [len(item[0]) for item in batch]
-        max_length = max(lengths)
+        # lengths = [len(item[0]) for item in batch]
+        # max_length = max(lengths)
+        max_length = self.max_source_length
 
         padded_source = torch.stack(
             [self.pad_source(source=item[0], max_length=max_length, mfcc_dim=mfcc_dim) for item in batch]).to(self.device)
@@ -181,8 +197,9 @@ class Trainer():
 
     def padded_target_from_batch(self, batch) -> (Tensor, List[int]):
         target_indices = list(map(self.vocabulary.build_tokenized_target, [item[2] for item in batch]))
-        lengths = [item.shape[0] for item in target_indices]
-        max_length = max(lengths)
+        # lengths = [item.shape[0] for item in target_indices]
+        # max_length = max(lengths)
+        max_length = self.max_target_length
 
         # Produces [(padded_target, pad_index), ...]
         padded = [self.pad_target(target=item, max_length=max_length) for item in target_indices]
@@ -201,10 +218,6 @@ class Trainer():
             # Compare against next word in sequence
             unpadded_targets.append(unpadded_target[1:])
             unpadded_predictions.append(unpadded_prediction[:-1])
-        # for target in unpadded_targets:
-        #     print('Unpadded targets:', target.shape)
-        # for prediction in unpadded_predictions:
-        #     print('Unpadded predictions:', prediction.shape)
         return torch.cat(unpadded_targets).to(self.device), torch.cat(unpadded_predictions).to(self.device)
 
     def check_model_for_randomness(self):
@@ -276,9 +289,16 @@ class Trainer():
         num_steps = len(train_loader)
 
         # Build model
-        self.model = Transformer(vocabulary=self.vocabulary, d_model=self.d_model, batch_size=self.batch_size,
-                                 dropout=self.dropout, num_heads=self.num_heads, max_length=self.max_length,
-                                 num_layers=self.num_layers, device=self.device, mfcc_depth=self.mfcc_depth,
+        self.model = Transformer(vocabulary=self.vocabulary,
+                                 d_model=self.d_model,
+                                 batch_size=self.batch_size,
+                                 dropout=self.dropout,
+                                 num_heads=self.num_heads,
+                                 max_source_length=self.max_source_length,
+                                 max_target_length=self.max_target_length,
+                                 num_layers=self.num_layers,
+                                 device=self.device,
+                                 mfcc_depth=self.mfcc_depth,
                                  debug=self.debug)
         if torch.cuda.device_count() > 1:
             print('Multiple GPUs detected. GPU count:', torch.cuda.device_count())
@@ -327,6 +347,7 @@ class Trainer():
         graph_target, _ = self.padded_target_from_batch(batch=self.data_train[:self.batch_size])
         train_writer.add_graph(self.model, (graph_source, graph_target))
 
+        self.save_models(epoch=0, global_step=0)
         print_step = num_steps // self.output_lines_per_epoch
         if print_step <= 0:
             print_step = None
@@ -343,6 +364,7 @@ class Trainer():
         else:
             print('Starting training...')
         print()
+
         self.model.train()
         try:
             for epoch in range(self.num_epochs):
@@ -405,7 +427,7 @@ class Trainer():
                             f'Loss: {avg_loss:.5f}  |  '
                             f'WER: {word_error_rate:>6.1%}  |  '
                             f'LR: {scheduler.get_last_lr()[0]:.2e}  |  '
-                            f'Time: {step_time:>6.3f}s / {(elapsed / 60):>4.1f}m')
+                            f'Time: {step_time:>6.3f}s / {(elapsed / 60):>3.0f}m {(elapsed % 60):>2.0f}s')
 
                 # Test (Validation)
                 print('Running validation...')

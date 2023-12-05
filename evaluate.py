@@ -2,14 +2,12 @@ import argparse
 import math
 from pathlib import Path
 import librosa
-import numpy as np
 import soundfile as sf
 import torch
 from torch import Tensor
-from src.transformer import Transformer
+from src.model import Transformer
 from src.vocabulary import Vocabulary
 from config import Config
-import h5py
 
 
 def main():

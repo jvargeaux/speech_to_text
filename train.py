@@ -2,7 +2,6 @@ import argparse
 from pathlib import Path
 import shutil
 import torch
-from torch import nn
 from src.trainer import Trainer
 from config import Config
 
@@ -38,8 +37,10 @@ def main():
                         default=Config.NUM_HEADS, help='Number of attention heads')
     parser.add_argument('--dropout', '-d', type=float, nargs='?',
                         default=Config.DROPOUT, help='Dropout probability')
-    parser.add_argument('--max_length', '-ml', type=int, nargs='?',
-                        default=Config.MAX_LENGTH, help='Max sequence length of positional encoding matrix')
+    parser.add_argument('--max_source_length', '-ms', type=int, nargs='?',
+                        default=Config.MAX_SOURCE_LENGTH, help='Max sequence length of source mfcc data')
+    parser.add_argument('--max_target_length', '-mt', type=int, nargs='?',
+                        default=Config.MAX_TARGET_LENGTH, help='Max sequence length of target word tokens')
     parser.add_argument('--max_vocab_size', '-mv', type=int, nargs='?',
                         default=Config.MAX_VOCAB_SIZE, help='Max size of vocabulary')
     parser.add_argument('--num_layers', '-nl', type=int, nargs='?',
@@ -103,7 +104,8 @@ def main():
     print('Num encoder/decoder layers:', args.num_layers)
     print('MFCC depth:', args.mfcc_depth)
     print('Batch size:', args.batch_size)
-    print('Max sequence length:', args.max_length)
+    print('Max source length:', args.max_source_length)
+    print('Max target length:', args.max_target_length)
     print('Max vocab size:', args.max_vocab_size)
     print('Dropout probability:', args.dropout)
     print('Split (train):', args.split_train)
@@ -126,7 +128,8 @@ def main():
                       num_layers=args.num_layers,
                       dropout=args.dropout,
                       num_heads=args.num_heads,
-                      max_length=args.max_length,
+                      max_source_length=args.max_source_length,
+                      max_target_length=args.max_target_length,
                       max_vocab_size=args.max_vocab_size,
                       batch_size=args.batch_size,
                       mfcc_depth=args.mfcc_depth,
