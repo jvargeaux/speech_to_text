@@ -414,7 +414,7 @@ class Trainer():
                         elapsed = time.time() - start
                         step_time = elapsed / (i + 1)
                         tokens_per_sec = epoch_tokens / elapsed
-                        avg_loss = epoch_loss / num_steps
+                        avg_loss = epoch_loss / i
                         word_error_rate = epoch_error / epoch_tokens
                         train_writer.add_scalar('Metrics/1 WER', word_error_rate, global_step=global_step)
                         train_writer.add_scalar('Metrics/2 Loss (CE)', avg_loss, global_step=global_step)
@@ -462,7 +462,7 @@ class Trainer():
 
                 test_elapsed = time.time() - test_start
                 test_tokens_per_sec = test_tokens / test_elapsed
-                test_avg_loss = test_loss / num_steps
+                test_avg_loss = test_loss / i
                 test_word_error_rate = test_error / test_tokens
                 test_writer.add_scalar('Metrics/1 WER', test_word_error_rate, global_step=global_step)
                 test_writer.add_scalar('Metrics/2 Loss (CE)', test_avg_loss, global_step=global_step)
