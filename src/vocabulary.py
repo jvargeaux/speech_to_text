@@ -13,6 +13,10 @@ class Vocabulary():
         self.eos_token = '<eos>'
         self.pad_token = '<pad>'
         self.unk_token = '<unk>'
+        self.sos_token_tensor = 0
+        self.eos_token_tensor = 0
+        self.pad_token_tensor = 0
+        self.unk_token_tensor = 0
         self.vocab = None
         self.vocab_size = 0
         self.max_size = max_size
@@ -27,10 +31,18 @@ class Vocabulary():
                                                max_tokens=self.max_size)
         self.vocab.set_default_index(self.vocab[self.unk_token])
         self.vocab_size = len(self.vocab)
+        self.init_token_tensors()
 
     def load_vocab(self, vocab: Vocab):
         self.vocab = vocab
         self.vocab_size = len(self.vocab)
+        self.init_token_tensors()
+    
+    def init_token_tensors(self):
+        self.sos_token_tensor = torch.tensor(self.vocab([self.sos_token]), dtype=torch.long, device=self.device)
+        self.eos_token_tensor = torch.tensor(self.vocab([self.eos_token]), dtype=torch.long, device=self.device)
+        self.pad_token_tensor = torch.tensor(self.vocab([self.pad_token]), dtype=torch.long, device=self.device)
+        self.unk_token_tensor = torch.tensor(self.vocab([self.unk_token]), dtype=torch.long, device=self.device)
 
     def tokenize_sequence(self, sequence: str):
         return [self.sos_token] + self.tokenizer(sequence) + [self.eos_token]

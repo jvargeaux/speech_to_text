@@ -11,8 +11,8 @@ class Config:
     D_MODEL = 512
     NUM_HEADS = 8
     DROPOUT = 0.1
-    MAX_SOURCE_LENGTH = 2000  # 50/second => 30s total | max: 1748
-    MAX_TARGET_LENGTH = 600   #                        | max: 576
+    MAX_SOURCE_LENGTH = 1500  # 50/second => 30s total | max: 1306
+    MAX_TARGET_LENGTH = 100   #                        | max: 86
     MAX_VOCAB_SIZE = 18000
     NUM_LAYERS = 4
     BATCH_SIZE = 64

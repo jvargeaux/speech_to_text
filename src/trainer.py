@@ -150,15 +150,19 @@ class Trainer():
         longest_source_test = 0
         longest_target_test = 0
         for item in self.data_train:
-            if len(item[0]) > longest_source_train:
-                longest_source_train = len(item[0])
-            if len(item[2]) > longest_target_train:
-                longest_target_train = len(item[2])
+            source_length = len(item[0])
+            target_length = len(self.vocabulary.tokenize_sequence(item[2]))
+            if source_length > longest_source_train:
+                longest_source_train = source_length
+            if target_length > longest_target_train:
+                longest_target_train = target_length
         for item in self.data_test:
-            if len(item[0]) > longest_source_test:
-                longest_source_test = len(item[0])
-            if len(item[2]) > longest_target_test:
-                longest_target_test = len(item[2])
+            source_length = len(item[0])
+            target_length = len(self.vocabulary.tokenize_sequence(item[2]))
+            if source_length > longest_source_test:
+                longest_source_test = source_length
+            if target_length > longest_target_test:
+                longest_target_test = target_length
         print('Longest source length (train):', f'{longest_source_train} (compressed 4x to {longest_source_train // 4})')
         print('Longest target length (train):', longest_target_train)
         print('Longest source length (test):', f'{longest_source_test} (compressed 4x to {longest_source_test // 4})')
@@ -180,10 +184,8 @@ class Trainer():
 
     def pad_target(self, target: Tensor, max_length: int) -> (Tensor, int):
         num_pad_tokens = max_length - target.shape[0]
-        pad_sequence = ' '.join([self.vocabulary.pad_token] * num_pad_tokens)
-        pad_tensor = self.vocabulary.get_tensor_from_sequence(pad_sequence)
         pad_index = len(target)
-        return torch.cat((target, pad_tensor)), pad_index
+        return torch.cat((target, self.vocabulary.pad_token_tensor.repeat(num_pad_tokens))), pad_index
 
     def padded_source_from_batch(self, batch) -> Tensor:
         mfcc_dim = len(batch[0][0][0])
@@ -271,9 +273,6 @@ class Trainer():
             self.import_data()
         except:
             return
-        self.verify_longest_sequence()
-        print()
-
         if self.checkpoint_path is not None:
             if not Path.exists(self.checkpoint_path):
                 print('Error: Provided checkpoint path does not exist. Aborting...')
@@ -282,6 +281,8 @@ class Trainer():
             self.load_checkpoint_vocabulary()
         else:
             self.build_vocabulary()
+        print()
+        self.verify_longest_sequence()
 
         # Prepare training data
         train_loader = DataLoader(dataset=self.data_train, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)

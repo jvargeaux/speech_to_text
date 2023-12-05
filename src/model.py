@@ -493,7 +493,6 @@ class Transformer(nn.Module):
         self.decoder = Decoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
         self.linear = nn.Linear(d_model, vocab_size)
         self.target_mask = TargetMask(batch_size=batch_size, max_length=max_target_length, device=device)
-        self.pad_token_tensor = self.vocabulary.get_tensor_from_sequence(self.vocabulary.pad_token)
 
     def source_mask(self, source: Tensor):
         return (source != 0)
@@ -511,7 +510,7 @@ class Transformer(nn.Module):
         encoder_out = self.encoder(x=pos_encoded_source, mask=source_mask)
 
         # Decoder
-        target_mask = self.target_mask(target=decoder_source, pad_token_tensor=self.pad_token_tensor)
+        target_mask = self.target_mask(target=decoder_source, pad_token_tensor=self.vocabulary.pad_token_tensor)
         embedded_target = self.word_embeddings(decoder_source)
         pos_encoded_target = self.positional_encoding(embedded_target)
         decoder_out = self.decoder(x=pos_encoded_target, encoder_out=encoder_out, source_mask=source_mask, target_mask=target_mask)
