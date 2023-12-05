@@ -100,7 +100,6 @@ class Trainer():
             print()
         if self.subset is not None:
             train_files = train_files[:self.subset]
-        test_files = test_files[:64]
 
         print('Loading mfcc data...')
         data_train = []
