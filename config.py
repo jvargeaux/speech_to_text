@@ -27,7 +27,7 @@ class Config:
     COOLDOWN = 0  # seconds every step, None = no cooldown
     SPLIT_TRAIN = SPLITS.TRAIN_CLEAN_360.value
     SPLIT_TEST = SPLITS.TEST_CLEAN.value
-    SUBSET = 500  # None = all
+    SUBSET = None  # None = all
     CHECKPOINT_PATH = None  # None = don't use
     RESET_LR = True
 
