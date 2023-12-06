@@ -386,12 +386,13 @@ class Trainer():
         try:
             for epoch in range(self.num_epochs):
                 epoch_start = time.time()
-                epoch_count = 0
-                epoch_tokens = 0
-                epoch_loss = 0
-                epoch_error = 0
 
                 # Train
+                running_start = time.time()
+                running_count = 0
+                running_tokens = 0
+                running_loss = 0
+                running_error = 0
                 for i, batch in enumerate(train_loader):
                     step_start = time.time()
                     global_step = start_step + (epoch * num_steps + i + 1)
@@ -422,80 +423,43 @@ class Trainer():
 
                     elapsed = time.time() - epoch_start
                     step_time = time.time() - step_start
+                    running_time = time.time() - running_start
 
-                    step_count = len(batch)
-                    step_tokens = len(target_flat)
-                    step_loss = loss.item()
-                    step_error = torch.sum((prediction_indices != target_flat).float()).item()
-                    step_word_error_rate = step_error / step_tokens
-                    step_tokens_per_sec = step_tokens / step_time
-                    step_tokens_per_batch = step_tokens / step_count
-                    step_loss_per_token = step_loss / step_tokens_per_batch
-
-                    epoch_count += step_count
-                    epoch_tokens += step_tokens
-                    epoch_loss += step_loss
-                    epoch_error += step_error
+                    running_count += len(batch)
+                    running_tokens += len(target_flat)
+                    running_loss += loss.item()
+                    running_error += torch.sum((prediction_indices != target_flat).float()).item()
 
                     if self.cooldown is not None and self.cooldown > 0:
                         time.sleep(self.cooldown)
 
                     if print_step is not None and (i + 1) % print_step == 0:
-                        train_writer.add_scalar('Metrics/1 WER', step_word_error_rate, global_step=global_step)
-                        train_writer.add_scalar('Metrics/2 Loss (CE)', step_loss_per_token, global_step=global_step)
+                        word_error_rate = running_error / running_tokens
+                        running_tokens_per_sec = running_tokens / running_time
+                        running_tokens_per_sequence = running_tokens / running_count
+                        running_loss_per_sequence = running_loss / running_count
+
+                        train_writer.add_scalar('Metrics/1 WER', word_error_rate, global_step=global_step)
+                        train_writer.add_scalar('Metrics/2 Loss (CE)', running_loss_per_sequence, global_step=global_step)
                         train_writer.add_scalar('Metrics/3 LR', scheduler.get_last_lr()[0], global_step=global_step)
-                        train_writer.add_scalar('Other/1 Tokens Per Second', step_tokens_per_sec, global_step=global_step)
-                        train_writer.add_scalar('Other/2 Tokens Per Batch', step_tokens_per_batch, global_step=global_step)
+                        train_writer.add_scalar('Other/1 Tokens Per Second', running_tokens_per_sec, global_step=global_step)
+                        train_writer.add_scalar('Other/2 Tokens Per Sequence', running_tokens_per_sequence, global_step=global_step)
+                        train_writer.add_scalar('Other/3 Step Time', step_time, global_step=global_step)
                         train_writer.add_histogram('Vocab Distribution', torch.mean(prediction_flat, dim=0), global_step=global_step)
-                        print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  |  '
-                            f'Step: {(i+1):>4}/{num_steps}  |  '
-                            f'Tokens/sec: {step_tokens_per_sec:>6.1f}  |  '
-                            f'Loss: {step_loss_per_token:>8.5f}  |  '
-                            f'WER: {step_word_error_rate:>6.1%}  |  '
-                            f'LR: {scheduler.get_last_lr()[0]:.2e}  |  '
-                            f'Time: {step_time:>6.3f}s / {(elapsed / 60):>3.0f}m {(elapsed % 60):>2.0f}s')
+                        print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  {(elapsed / 60):>3.0f}m {(elapsed % 60):>2.0f}s  |  '
+                              f'Step: {(i+1):>4}/{num_steps}  {step_time:>6.2f}s  |  '
+                              f'Tokens/sec: {running_tokens_per_sec:>6.1f}  |  '
+                              f'Loss: {running_loss_per_sequence:>8.5f}  |  '
+                              f'WER: {word_error_rate:>6.1%}  |  '
+                              f'LR: {scheduler.get_last_lr()[0]:.2e}')
 
-                # Test (Validation)
-                print('Running validation...')
-                test_start = time.time()
-                test_tokens = 0
-                test_loss = 0
-                test_error = 0
-                self.model.eval()
-                for i, batch in enumerate(test_loader):
-                    padded_sources = self.padded_source_from_batch(batch=batch)
-                    padded_targets, pad_indices = self.padded_target_from_batch(batch=batch)
+                        running_start = time.time()
+                        running_count = 0
+                        running_tokens = 0
+                        running_loss = 0
+                        running_error = 0
 
-                    # Becomes no-op if self.use_amp is False
-                    # NOTE: passing self.device to device_type gives error, keep on 'cuda' even if device is cpu
-                    with torch.no_grad():
-                        (out, embedded_source, pos_encoded_source, encoder_out, embedded_target, pos_encoded_target,
-                        target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
-
-                        target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
-                        prediction_indices = torch.argmax(prediction_flat, dim=-1)
-
-                        loss = criterion(prediction_flat, target_flat)
-
-                        test_tokens += len(target_flat)
-                        test_loss += loss.item()
-                        test_error += torch.sum((prediction_indices != target_flat).float()).item()
-
-                    if self.cooldown is not None and self.cooldown > 0:
-                        time.sleep(self.cooldown)
-
-                test_elapsed = time.time() - test_start
-                test_avg_loss = test_loss / i
-                test_loss_per_token = test_avg_loss / step_tokens_per_batch
-                test_word_error_rate = test_error / test_tokens
-                test_writer.add_scalar('Metrics/1 WER', test_word_error_rate, global_step=global_step)
-                test_writer.add_scalar('Metrics/2 Loss (CE)', test_loss_per_token, global_step=global_step)
-                print(f'VALIDATION RESULTS  |  '
-                    f'Loss: {test_loss_per_token:>10.5f}  |  '
-                    f'WER: {test_word_error_rate:>6.1%}  |  '
-                    f'Time: {test_elapsed:>4.2f}s')
-                self.model.train()
-
+                # Save models & output model sample
                 if self.checkpoint_after_epoch is not None and (epoch + 1) % self.checkpoint_after_epoch == 0:
                     self.save_models(epoch=epoch+1, global_step=global_step)
                     print()
@@ -521,6 +485,52 @@ class Trainer():
                         print('Prediction:    ', ' '.join(self.vocabulary.get_sequence_from_tensor(sample_out_indices[0])))
                         print()
                     self.model.train()
+
+                # Test (Validation)
+                print('Running validation...')
+                test_start = time.time()
+                test_count = 0
+                test_tokens = 0
+                test_loss = 0
+                test_error = 0
+                self.model.eval()
+                for i, batch in enumerate(test_loader):
+                    padded_sources = self.padded_source_from_batch(batch=batch)
+                    padded_targets, pad_indices = self.padded_target_from_batch(batch=batch)
+
+                    with torch.no_grad():
+                        # Becomes no-op if self.use_amp is False
+                        # NOTE: passing self.device to device_type gives error, keep on 'cuda' even if device is cpu
+                        with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=self.use_amp):
+                            (out, embedded_source, pos_encoded_source, encoder_out, embedded_target, pos_encoded_target,
+                            target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
+
+                            target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
+                            prediction_indices = torch.argmax(prediction_flat, dim=-1)
+
+                            loss = criterion(prediction_flat, target_flat)
+
+                            test_count += len(batch)
+                            test_tokens += len(target_flat)
+                            test_loss += loss.item()
+                            test_error += torch.sum((prediction_indices != target_flat).float()).item()
+
+                        if self.cooldown is not None and self.cooldown > 0:
+                            time.sleep(self.cooldown)
+
+                test_elapsed = time.time() - test_start
+                test_word_error_rate = test_error / test_tokens
+                test_tokens_per_sequence = test_tokens / test_count
+                test_loss_per_sequence = test_loss / test_count
+
+                test_writer.add_scalar('Metrics/1 WER', test_word_error_rate, global_step=global_step)
+                test_writer.add_scalar('Metrics/2 Loss (CE)', test_loss_per_sequence, global_step=global_step)
+                print(f'VALIDATION RESULTS  |  '
+                      f'Loss: {test_loss_per_sequence:>10.5f}  |  '
+                      f'WER: {test_word_error_rate:>6.1%}  |  '
+                      f'Time: {test_elapsed:>4.2f}s')
+                print()
+                self.model.train()
 
         except KeyboardInterrupt:
             print('\r  ')
