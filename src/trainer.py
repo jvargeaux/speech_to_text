@@ -101,6 +101,7 @@ class Trainer():
             print()
         if self.subset is not None:
             train_files = train_files[:self.subset]
+            test_files = test_files[:self.subset]
 
         print('Loading mfcc data...')
 
@@ -384,7 +385,7 @@ class Trainer():
         self.model.train()
         try:
             for epoch in range(self.num_epochs):
-                start = time.time()
+                epoch_start = time.time()
                 epoch_count = 0
                 epoch_tokens = 0
                 epoch_loss = 0
@@ -392,6 +393,7 @@ class Trainer():
 
                 # Train
                 for i, batch in enumerate(train_loader):
+                    step_start = time.time()
                     global_step = start_step + (epoch * num_steps + i + 1)
                     if self.checkpoint_path is None and self.num_warmup_steps > 0 and global_step <= self.num_warmup_steps:
                         scheduler = warmup_scheduler
@@ -408,6 +410,7 @@ class Trainer():
                         target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
 
                         target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
+                        prediction_indices = torch.argmax(prediction_flat, dim=-1)
 
                         # Calculate loss & perform backprop
                         self.optimizer.zero_grad(set_to_none=True)
@@ -417,38 +420,44 @@ class Trainer():
                         self.scaler.update()
                         scheduler.step()
 
-                    epoch_count += len(batch)
-                    epoch_tokens += len(target_flat)
-                    epoch_loss += loss.item()
-                    prediction_indices = torch.argmax(prediction_flat, dim=-1)
-                    epoch_error += torch.sum((prediction_indices != target_flat).float()).item()
+                    elapsed = time.time() - epoch_start
+                    step_time = time.time() - step_start
+
+                    step_count = len(batch)
+                    step_tokens = len(target_flat)
+                    step_loss = loss.item()
+                    step_error = torch.sum((prediction_indices != target_flat).float()).item()
+                    step_word_error_rate = step_error / step_tokens
+                    step_tokens_per_sec = step_tokens / step_time
+                    step_tokens_per_batch = step_tokens / step_count
+                    step_loss_per_token = step_loss / step_tokens_per_batch
+
+                    epoch_count += step_count
+                    epoch_tokens += step_tokens
+                    epoch_loss += step_loss
+                    epoch_error += step_error
 
                     if self.cooldown is not None and self.cooldown > 0:
                         time.sleep(self.cooldown)
 
                     if print_step is not None and (i + 1) % print_step == 0:
-                        elapsed = time.time() - start
-                        step_time = elapsed / (i + 1)
-                        tokens_per_sec = epoch_tokens / elapsed
-                        avg_loss = epoch_loss / i
-                        word_error_rate = epoch_error / epoch_tokens
-                        train_writer.add_scalar('Metrics/1 WER', word_error_rate, global_step=global_step)
-                        train_writer.add_scalar('Metrics/2 Loss (CE)', avg_loss, global_step=global_step)
+                        train_writer.add_scalar('Metrics/1 WER', step_word_error_rate, global_step=global_step)
+                        train_writer.add_scalar('Metrics/2 Loss (CE)', step_loss_per_token, global_step=global_step)
                         train_writer.add_scalar('Metrics/3 LR', scheduler.get_last_lr()[0], global_step=global_step)
-                        train_writer.add_scalar('Performance/Tokens Per Second', tokens_per_sec, global_step=global_step)
+                        train_writer.add_scalar('Other/1 Tokens Per Second', step_tokens_per_sec, global_step=global_step)
+                        train_writer.add_scalar('Other/2 Tokens Per Batch', step_tokens_per_batch, global_step=global_step)
                         train_writer.add_histogram('Vocab Distribution', torch.mean(prediction_flat, dim=0), global_step=global_step)
                         print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  |  '
                             f'Step: {(i+1):>4}/{num_steps}  |  '
-                            f'Tokens/sec: {tokens_per_sec:>6.1f}  |  '
-                            f'Loss: {avg_loss:>8.5f}  |  '
-                            f'WER: {word_error_rate:>6.1%}  |  '
+                            f'Tokens/sec: {step_tokens_per_sec:>6.1f}  |  '
+                            f'Loss: {step_loss_per_token:>8.5f}  |  '
+                            f'WER: {step_word_error_rate:>6.1%}  |  '
                             f'LR: {scheduler.get_last_lr()[0]:.2e}  |  '
                             f'Time: {step_time:>6.3f}s / {(elapsed / 60):>3.0f}m {(elapsed % 60):>2.0f}s')
 
                 # Test (Validation)
                 print('Running validation...')
                 test_start = time.time()
-                test_count = 0
                 test_tokens = 0
                 test_loss = 0
                 test_error = 0
@@ -464,27 +473,25 @@ class Trainer():
                         target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
 
                         target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
+                        prediction_indices = torch.argmax(prediction_flat, dim=-1)
 
                         loss = criterion(prediction_flat, target_flat)
 
-                        test_count += len(batch)
                         test_tokens += len(target_flat)
                         test_loss += loss.item()
-                        prediction_indices = torch.argmax(prediction_flat, dim=-1)
                         test_error += torch.sum((prediction_indices != target_flat).float()).item()
 
                     if self.cooldown is not None and self.cooldown > 0:
                         time.sleep(self.cooldown)
 
                 test_elapsed = time.time() - test_start
-                test_tokens_per_sec = test_tokens / test_elapsed
                 test_avg_loss = test_loss / i
+                test_loss_per_token = test_avg_loss / step_tokens_per_batch
                 test_word_error_rate = test_error / test_tokens
                 test_writer.add_scalar('Metrics/1 WER', test_word_error_rate, global_step=global_step)
-                test_writer.add_scalar('Metrics/2 Loss (CE)', test_avg_loss, global_step=global_step)
-                test_writer.add_scalar('Performance/Tokens Per Second', test_tokens_per_sec, global_step=global_step)
+                test_writer.add_scalar('Metrics/2 Loss (CE)', test_loss_per_token, global_step=global_step)
                 print(f'VALIDATION RESULTS  |  '
-                    f'Loss: {test_avg_loss:>10.5f}  |  '
+                    f'Loss: {test_loss_per_token:>10.5f}  |  '
                     f'WER: {test_word_error_rate:>6.1%}  |  '
                     f'Time: {test_elapsed:>4.2f}s')
                 self.model.train()

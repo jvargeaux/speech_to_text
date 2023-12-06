@@ -12,8 +12,8 @@ class Config:
     NUM_HEADS = 8
     DROPOUT = 0.1
     MAX_SOURCE_LENGTH = 1800  # 50/second => 30s total | max: 1748
-    MAX_TARGET_LENGTH = 100   #                        | max: 86
-    MAX_VOCAB_SIZE = 18000
+    MAX_TARGET_LENGTH = 200   #                        | max: 86
+    MAX_VOCAB_SIZE = 25000
     NUM_LAYERS = 6
     BATCH_SIZE = 32
 
@@ -23,14 +23,14 @@ class Config:
     LR_GAMMA = 0.9995
     LR_MIN = 1e-7
     WEIGHT_DECAY = 1e-4
-    NUM_WARMUP_STEPS = 1000
+    NUM_WARMUP_STEPS = 500
     COOLDOWN = 0  # seconds every step, None = no cooldown
-    SPLIT_TRAIN = SPLITS.DEV_OTHER.value
-    SPLIT_TEST = SPLITS.TEST_OTHER.value
-    SUBSET = None  # None = all
+    SPLIT_TRAIN = SPLITS.TRAIN_CLEAN_360.value
+    SPLIT_TEST = SPLITS.TEST_CLEAN.value
+    SUBSET = 500  # None = all
     CHECKPOINT_PATH = None  # None = don't use
     RESET_LR = True
 
     # Output
-    OUTPUT_LINES_PER_EPOCH = 200
+    OUTPUT_LINES_PER_EPOCH = 100
     CHECKPOINT_AFTER_EPOCH = 1
