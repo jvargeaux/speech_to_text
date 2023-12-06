@@ -1,8 +1,6 @@
 import argparse
 import matplotlib.pyplot as plt
 import numpy as np
-from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pad_sequence
 import torchaudio
 import librosa, librosa.display
 from pathlib import Path
@@ -11,22 +9,7 @@ import h5py
 
 from splits import SPLITS
 from config import Config
-
-
-class ProgressBar():
-    def __init__(self):
-        self.length = 30
-        self.fill = '█'
-        self.empty = '-'
-        print(f'Progress: {self.empty * self.length} | 0/0 | {0:.1f}%', end='\r')
-
-    def update(self, filled, total):
-        percentage = min([filled, total]) / total
-        filled_length = int(percentage * self.length)
-        empty_length = self.length - filled_length
-        print(f'Progress: {self.fill * filled_length}{self.empty * empty_length} | {filled}/{total} | {(percentage * 100):.1f}%', end='\r')
-        if percentage >= 1:
-            print()
+from util import ProgressBar
 
 
 class Preprocessor():
@@ -176,8 +159,8 @@ def main():
         description='Preprocess audio for the S2T transformer neural network',
         epilog='Epilogue sample text')
 
-    default_split_train = SPLITS.TRAIN_CLEAN_100.value
-    default_split_test = SPLITS.TEST_CLEAN.value
+    default_split_train = Config.SPLIT_TRAIN if Config.SPLIT_TRAIN is not None else SPLITS.TRAIN_CLEAN_100.value
+    default_split_test = Config.SPLIT_TEST if Config.SPLIT_TEST is not None else SPLITS.TEST_CLEAN.value
     parser.add_argument('--split_train', type=str, nargs='?', default=default_split_train, help='Name of dataset split for training')
     parser.add_argument('--split_test', type=str, nargs='?', default=default_split_test, help='Name of dataset split for testing (validation)')
     parser.add_argument('-d', '--display', type=int, default=-1, help='Index of one data sample to display')

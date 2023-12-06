@@ -17,6 +17,7 @@ from config import Config
 from src.model import Transformer
 from src.vocabulary import Vocabulary
 from src.metrics import Metrics
+from util import ProgressBar
 
 
 class Trainer():
@@ -102,22 +103,31 @@ class Trainer():
             train_files = train_files[:self.subset]
 
         print('Loading mfcc data...')
+
+        print('Train:')
+        progress_bar = ProgressBar()
         data_train = []
-        for file in train_files:
+        for i, file in enumerate(train_files):
             with h5py.File(file, 'r') as file_data:
                 data_train.append([file_data['mfccs'][:],
                             file_data['mfccs'].attrs['sample_rate'],
                             file_data['mfccs'].attrs['transcript'],
                             file_data['mfccs'].attrs['speaker_id']])
+            progress_bar.update(i + 1, len(train_files))
         self.data_train = data_train
+
+        print('Test:')
+        progress_bar = ProgressBar()
         data_test = []
-        for file in test_files:
+        for i, file in enumerate(test_files):
             with h5py.File(file, 'r') as file_data:
                 data_test.append([file_data['mfccs'][:],
                             file_data['mfccs'].attrs['sample_rate'],
                             file_data['mfccs'].attrs['transcript'],
                             file_data['mfccs'].attrs['speaker_id']])
+            progress_bar.update(i + 1, len(test_files))
         self.data_test = data_test
+
         print('Data loaded.')
         print()
 
@@ -222,6 +232,8 @@ class Trainer():
         return torch.cat(unpadded_targets).to(self.device), torch.cat(unpadded_predictions).to(self.device)
 
     def check_model_for_randomness(self):
+        print()
+        print('Checking model for randomness...')
         random_source = torch.rand((self.batch_size, 80, self.mfcc_depth), device=self.device)
         random_target = torch.randint(low=0, high=20, size=(self.batch_size, 22), device=self.device).to(torch.long)
 
@@ -234,6 +246,9 @@ class Trainer():
         difference = torch.sum(out2 - out1).item()
         if difference != 0:
             print('Warning! Model randomness detected:', difference)
+        else:
+            print('Success. No randomness detected.')
+        print()
 
     def save_models(self, epoch: int, global_step: int):
         save_directory = Path(self.run_path, f'models_{epoch}')
@@ -280,7 +295,6 @@ class Trainer():
             self.load_checkpoint_vocabulary()
         else:
             self.build_vocabulary()
-        print()
         self.verify_longest_sequence()
 
         # Prepare training data
@@ -345,7 +359,9 @@ class Trainer():
         test_writer = SummaryWriter(test_path)
         graph_source = self.padded_source_from_batch(batch=self.data_train[:self.batch_size])
         graph_target, _ = self.padded_target_from_batch(batch=self.data_train[:self.batch_size])
+        print('Creating tensorboard graph...')
         train_writer.add_graph(self.model, (graph_source, graph_target))
+        print('Graph created.')
 
         self.save_models(epoch=0, global_step=0)
         print_step = num_steps // self.output_lines_per_epoch
@@ -424,7 +440,7 @@ class Trainer():
                         print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  |  '
                             f'Step: {(i+1):>4}/{num_steps}  |  '
                             f'Tokens/sec: {tokens_per_sec:>6.1f}  |  '
-                            f'Loss: {avg_loss:.5f}  |  '
+                            f'Loss: {avg_loss:>8.5f}  |  '
                             f'WER: {word_error_rate:>6.1%}  |  '
                             f'LR: {scheduler.get_last_lr()[0]:.2e}  |  '
                             f'Time: {step_time:>6.3f}s / {(elapsed / 60):>3.0f}m {(elapsed % 60):>2.0f}s')
@@ -468,7 +484,7 @@ class Trainer():
                 test_writer.add_scalar('Metrics/2 Loss (CE)', test_avg_loss, global_step=global_step)
                 test_writer.add_scalar('Performance/Tokens Per Second', test_tokens_per_sec, global_step=global_step)
                 print(f'VALIDATION RESULTS  |  '
-                    f'Loss: {test_avg_loss:.5f}  |  '
+                    f'Loss: {test_avg_loss:>10.5f}  |  '
                     f'WER: {test_word_error_rate:>6.1%}  |  '
                     f'Time: {test_elapsed:>4.2f}s')
                 self.model.train()
