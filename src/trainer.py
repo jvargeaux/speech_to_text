@@ -86,6 +86,7 @@ class Trainer():
         self.use_amp = True if self.device == 'cuda' else False
         self.scaler = None
         self.use_multiple = True
+        self.use_fixed_padding = False
 
     def import_data(self):
         train_path = Path('mfcc', self.split_train)
@@ -199,9 +200,10 @@ class Trainer():
 
     def padded_source_from_batch(self, batch) -> Tensor:
         mfcc_dim = len(batch[0][0][0])
-        # lengths = [len(item[0]) for item in batch]
-        # max_length = max(lengths)
         max_length = self.max_source_length
+        if not self.use_fixed_padding:
+            lengths = [len(item[0]) for item in batch]
+            max_length = max(lengths)
 
         padded_source = torch.stack(
             [self.pad_source(source=item[0], max_length=max_length, mfcc_dim=mfcc_dim) for item in batch]).to(self.device)
@@ -209,9 +211,10 @@ class Trainer():
 
     def padded_target_from_batch(self, batch) -> (Tensor, List[int]):
         target_indices = list(map(self.vocabulary.build_tokenized_target, [item[2] for item in batch]))
-        # lengths = [item.shape[0] for item in target_indices]
-        # max_length = max(lengths)
         max_length = self.max_target_length
+        if not self.use_fixed_padding:
+            lengths = [item.shape[0] for item in target_indices]
+            max_length = max(lengths)
 
         # Produces [(padded_target, pad_index), ...]
         padded = [self.pad_target(target=item, max_length=max_length) for item in target_indices]
@@ -446,7 +449,7 @@ class Trainer():
                         train_writer.add_scalar('Other/2 Tokens Per Sequence', running_tokens_per_sequence, global_step=global_step)
                         train_writer.add_scalar('Other/3 Step Time', step_time, global_step=global_step)
                         train_writer.add_histogram('Vocab Distribution', torch.mean(prediction_flat, dim=0), global_step=global_step)
-                        print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  {(elapsed / 60):>3.0f}m {(elapsed % 60):>2.0f}s  |  '
+                        print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  {(elapsed // 60):>3.0f}m {(elapsed % 60):>2.0f}s  |  '
                               f'Step: {(i+1):>4}/{num_steps}  {step_time:>6.2f}s  |  '
                               f'Tokens/sec: {running_tokens_per_sec:>6.1f}  |  '
                               f'Loss: {running_loss_per_sequence:>8.5f}  |  '

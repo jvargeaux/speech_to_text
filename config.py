@@ -19,11 +19,11 @@ class Config:
 
     # Training
     NUM_EPOCHS = 100
-    LR = 8e-4
-    LR_GAMMA = 0.9995
+    LR = 5e-4
+    LR_GAMMA = 0.999
     LR_MIN = 1e-7
     WEIGHT_DECAY = 1e-4
-    NUM_WARMUP_STEPS = 500
+    NUM_WARMUP_STEPS = 1000
     COOLDOWN = 0  # seconds every step, None = no cooldown
     SPLIT_TRAIN = SPLITS.TRAIN_CLEAN_360.value
     SPLIT_TEST = SPLITS.TEST_CLEAN.value
