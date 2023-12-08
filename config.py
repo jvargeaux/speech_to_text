@@ -8,7 +8,7 @@ class Config:
     MFCC_DEPTH = 80
 
     # Model
-    D_MODEL = 1024
+    D_MODEL = 512
     NUM_HEADS = 8
     DROPOUT = 0.1
     MAX_SOURCE_LENGTH = 4000  # 50/second => 30s total | max: 3496

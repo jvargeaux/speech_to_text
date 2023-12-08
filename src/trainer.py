@@ -340,8 +340,8 @@ class Trainer():
         # Create LR schedulers
         warmup_scheduler = None
         if self.checkpoint_path is None and self.num_warmup_steps > 0:
-            warmup_scheduler = lr_scheduler.LinearLR(optimizer=self.optimizer, start_factor=1e-9, end_factor=1.0,
-                                                    total_iters=self.num_warmup_steps)
+            warmup_lambda = lambda step: (step / self.num_warmup_steps)
+            warmup_scheduler = lr_scheduler.LambdaLR(optimizer=self.optimizer, lr_lambda=warmup_lambda)
         training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
         # training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer,
         #                                                     T_max=(self.num_epochs * num_steps) - self.num_warmup_steps,
@@ -397,6 +397,7 @@ class Trainer():
                 running_loss = 0
                 running_error = 0
                 for i, batch in enumerate(train_loader):
+                    print((i / self.num_warmup_steps) * self.lr)
                     step_start = time.time()
                     global_step = start_step + (epoch * num_steps + i + 1)
                     if self.checkpoint_path is None and self.num_warmup_steps > 0 and global_step <= self.num_warmup_steps:
