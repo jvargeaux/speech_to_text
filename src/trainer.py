@@ -178,7 +178,7 @@ class Trainer():
         print('Longest target length (train):', longest_target_train)
         print('Longest source length (test):', f'{longest_source_test} (compressed 4x to {longest_source_test // 4})')
         print('Longest target length (test):', longest_target_test)
-
+    
     def save_config(self):
         config_path = Path(self.run_path, 'config.json')
         config = { key: value for key, value in vars(Config).items() if not '__' in key }
@@ -461,6 +461,9 @@ class Trainer():
                         running_tokens = 0
                         running_loss = 0
                         running_error = 0
+
+                # train_writer.add_hparams({ 'lr': self.lr }, { 'WER': word_error_rate }, run_name=str(self.run_path))
+                # train_writer.add_embedding for embedding projector
 
                 # Save models & output model sample
                 if self.checkpoint_after_epoch is not None and (epoch + 1) % self.checkpoint_after_epoch == 0:
