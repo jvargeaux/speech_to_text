@@ -15,7 +15,7 @@ class Config:
     MAX_TARGET_LENGTH = 200   #                        | max: 86
     MAX_VOCAB_SIZE = 40000
     NUM_LAYERS = 6
-    BATCH_SIZE = 64
+    BATCH_SIZE = 16
 
     # Training
     NUM_EPOCHS = 40
@@ -23,7 +23,7 @@ class Config:
     LR_GAMMA = 0.9998
     LR_MIN = 1e-7
     WEIGHT_DECAY = 1e-4
-    NUM_WARMUP_STEPS = 1000
+    NUM_WARMUP_STEPS = 2000
     COOLDOWN = 0  # seconds every step, None = no cooldown
     SPLIT_TRAIN = SPLITS.TRAIN_CLEAN_360.value
     SPLIT_TEST = SPLITS.TEST_CLEAN.value
@@ -32,5 +32,5 @@ class Config:
     RESET_LR = True
 
     # Output
-    OUTPUT_LINES_PER_EPOCH = 200
+    OUTPUT_LINES_PER_EPOCH = 100
     CHECKPOINT_AFTER_EPOCH = 1

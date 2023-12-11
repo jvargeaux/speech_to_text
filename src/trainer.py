@@ -235,6 +235,9 @@ class Trainer():
             unpadded_predictions.append(unpadded_prediction[:-1])
         return torch.cat(unpadded_targets).to(self.device), torch.cat(unpadded_predictions).to(self.device)
 
+    def flatten_batch(self, target_batch: Tensor, prediction_batch: Tensor):
+        return target_batch.reshape(-1), prediction_batch.reshape(-1, self.vocabulary.vocab_size)
+
     def check_model_for_randomness(self):
         print()
         print('Checking model for randomness...')
@@ -329,7 +332,7 @@ class Trainer():
         # Set optimizer and criterion
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr, betas=(0.9, 0.98), eps=1e-9,
                                           weight_decay=self.weight_decay)
-        criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1).to(self.device)
+        criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1, ignore_index=self.vocabulary.pad_token_tensor.item()).to(self.device)
 
         if self.checkpoint_path is not None:
             self.optimizer.load_state_dict(torch.load(Path(self.checkpoint_path, 'optimizer.pt')))
@@ -397,7 +400,6 @@ class Trainer():
                 running_loss = 0
                 running_error = 0
                 for i, batch in enumerate(train_loader):
-                    print((i / self.num_warmup_steps) * self.lr)
                     step_start = time.time()
                     global_step = start_step + (epoch * num_steps + i + 1)
                     if self.checkpoint_path is None and self.num_warmup_steps > 0 and global_step <= self.num_warmup_steps:
@@ -414,12 +416,13 @@ class Trainer():
                         (out, embedded_source, pos_encoded_source, encoder_out, embedded_target, pos_encoded_target,
                         target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
 
-                        target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
+                        target_flat, prediction_flat = self.flatten_batch(padded_targets, out)
                         prediction_indices = torch.argmax(prediction_flat, dim=-1)
 
                         # Calculate loss & perform backprop
                         self.optimizer.zero_grad(set_to_none=True)
                         loss = criterion(prediction_flat, target_flat)
+                        # NOTE: Mask pad indices from loss before backward, instead of unpadding before loss calculation
                         self.scaler.scale(loss).backward()
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
