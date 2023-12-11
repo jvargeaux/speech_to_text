@@ -40,12 +40,18 @@ def main():
 
     # Build model
     device = torch.device('cpu')
-    vocabulary = Vocabulary(vocab=torch.load(Path(args.model, 'vocabulary.pt')), device=device)
+    vocabulary = Vocabulary(vocab=torch.load(Path(args.model, 'vocabulary.pt'), map_location=device), device=device)
 
-    model = Transformer(vocabulary=vocabulary, d_model=Config.D_MODEL, dropout=None, batch_size=Config.BATCH_SIZE,
-                        num_heads=Config.NUM_HEADS, max_length=Config.MAX_LENGTH, num_layers=Config.NUM_LAYERS,
-                        mfcc_depth=Config.MFCC_DEPTH, device=device).to(device)
-    model.load_state_dict(torch.load(Path(args.model, 'model.pt')))
+    model = Transformer(vocabulary=vocabulary,
+                        d_model=Config.D_MODEL,
+                        dropout=None, batch_size=Config.BATCH_SIZE,
+                        num_heads=Config.NUM_HEADS,
+                        max_source_length=Config.MAX_SOURCE_LENGTH,
+                        max_target_length=Config.MAX_TARGET_LENGTH,
+                        num_layers=Config.NUM_LAYERS,
+                        mfcc_depth=Config.MFCC_DEPTH,
+                        device=device).to(device)
+    model.load_state_dict(torch.load(Path(args.model, 'model.pt'), map_location=device))
     model.eval()
 
     total_params = 0
@@ -61,8 +67,8 @@ def main():
     print('Total model parameters:', total_params)
     print('Total model size:', total_size)
     print()
-    for param in params[:50]:
-        print(param)
+    # for param in params[:50]:
+    #     print(param)
 
     # Evaluate
     for file in processed_files:
@@ -86,7 +92,7 @@ def main():
             source = source.expand((Config.BATCH_SIZE, source.shape[0], source.shape[1]))
 
         is_end_of_sentence = False
-        MAX_OUTPUT_TOKENS = 200
+        MAX_OUTPUT_TOKENS = 50
         result_length = 1
         while not is_end_of_sentence:
             expanded_result = result
@@ -104,18 +110,20 @@ def main():
 
             # Take only the first sequence of the prediction batch, the source batch was padded
             avg_out = out[0]
-            for i in range(len(out) - 1):
-                avg_out += out[i + 1]
-            avg_out /= len(out)
-            prediction = avg_out
+
+            # Take average of all sequences
+            # for i in range(len(out) - 1):
+            #     avg_out += out[i + 1]
+            # avg_out /= len(out)
 
             # Get predicted tokens
+            prediction = avg_out
             prediction_indices = torch.argmax(prediction, dim=-1)
-            # print()
-            # print('Input:', ' '.join(vocabulary.get_sequence_from_tensor(result)))
-            # for i in range(len(out)):
-            #     print(f'Prediction[{i}]:', ' '.join(vocabulary.get_sequence_from_tensor(torch.argmax(out[i], dim=-1))))
-            # print('Prediction (average):', ' '.join(vocabulary.get_sequence_from_tensor(prediction_indices)))
+            print()
+            print('Input:', ' '.join(vocabulary.get_sequence_from_tensor(result)))
+            for i in range(len(out)):
+                print(f'Prediction[{i}]:', ' '.join(vocabulary.get_sequence_from_tensor(torch.argmax(out[i], dim=-1))))
+            print('Prediction (average):', ' '.join(vocabulary.get_sequence_from_tensor(prediction_indices)))
 
             # Set result to current prediction with prepended sos token, and trim to length + 1
             result_length += 1
