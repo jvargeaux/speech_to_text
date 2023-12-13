@@ -67,6 +67,8 @@ def main():
                         default=Config.OUTPUT_LINES_PER_EPOCH, help='Number of lines of output per epoch')
     parser.add_argument('--checkpoint_after_epoch', '-se', type=int, nargs='?',
                         default=Config.CHECKPOINT_AFTER_EPOCH, help='Save model checkpoint & sample prediction after x number of epochs')
+    parser.add_argument('--tests_per_epoch', '-te', type=int, nargs='?',
+                        default=Config.TESTS_PER_EPOCH, help='Number of tests (validations) to perform every epoch')
     parser.add_argument('--checkpoint_path', '-cp', type=Path, nargs='?',
                         default=Config.CHECKPOINT_PATH, help='Save model checkpoint & sample prediction after x number of epochs')
     parser.add_argument('--reset_lr', action='store_true', default=Config.RESET_LR,
@@ -144,6 +146,7 @@ def main():
                       cooldown=args.cooldown,
                       output_lines_per_epoch=args.output_lines_per_epoch,
                       checkpoint_after_epoch=args.checkpoint_after_epoch,
+                      tests_per_epoch=args.tests_per_epoch,
                       checkpoint_path=args.checkpoint_path,
                       reset_lr=args.reset_lr,
                       split_train=args.split_train,
