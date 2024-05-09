@@ -1,10 +1,12 @@
 from datetime import datetime
 from pathlib import Path
 from typing import List
-import h5py
 import json
-import matplotlib.pyplot as plt
 import time
+
+import h5py
+import matplotlib.pyplot as plt
+from omegaconf import OmegaConf
 import torch
 from torch import Tensor
 from torch.optim import lr_scheduler
@@ -12,7 +14,6 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from preprocess import Preprocessor
-from config import Config
 from src.model import Transformer
 from src.vocabulary import Vocabulary
 from src.metrics import Metrics
@@ -21,6 +22,7 @@ from util import ProgressBar
 
 class Trainer():
     def __init__(self,
+                 config,
                  d_model: int,
                  num_layers: int,
                  batch_size: int,
@@ -47,7 +49,43 @@ class Trainer():
                  subset: int | None=None,
                  device: str='cpu',
                  debug=False):
-        # Model
+
+        self.device = device
+        self.config = config
+
+        # self.mfcc_depth = config['audio']['mfcc_depth']
+
+        # self.d_model: int = config['model']['d_model']
+        # self.num_layers: int = config['model']['num_layers']
+        # self.dropout: float = config['model']['dropout']
+        # self.num_heads: int = config['model']['num_heads']
+        # self.max_source_length: int = config['model']['max_source_length']
+        # self.max_target_length: int = config['model']['max_target_length']
+        # self.max_vocab_size: int | None = config['model']['max_vocab_size']
+        # self.batch_size: int = config['model']['batch_size']
+
+        # self.num_epochs: int = config['training']['num_epochs']
+        # self.lr: float = config['training']['lr']
+        # self.lr_gamma: float = config['training']['lr_gamma']
+        # self.lr_min: float = config['training']['lr_min']
+        # self.weight_decay: float | None = config['training']['weight_decay']
+        # self.num_warmup_steps: int | None = config['training']['num_warmup_steps']
+        # self.cooldown: int | None = config['training']['cooldown']
+        # self.checkpoint_path: Path | None = config['training']['checkpoint_path']
+        # self.reset_lr: bool = config['training']['reset_lr']
+        # self.splits_train: list[str] = config['training']['splits_train']
+        # self.splits_test: list[str] = config['training']['splits_test']
+        # self.subset: int | None = config['training']['subset']
+        
+        # self.output_lines_per_epoch = config['output']['output_lines_per_epoch']
+        # self.checkpoint_after_epoch = config['output']['checkpoint_after_epoch']
+        # self.tests_per_epoch = config['output']['tests_per_epoch']
+
+        # self.debug: bool = debug
+        # self.run_path = Path('runs', datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
+
+        self.mfcc_depth = mfcc_depth
+
         self.d_model = d_model
         self.num_layers = num_layers
         self.dropout = dropout
@@ -56,12 +94,8 @@ class Trainer():
         self.max_target_length = max_target_length
         self.max_vocab_size = max_vocab_size
         self.batch_size = batch_size
-        self.mfcc_depth = mfcc_depth
 
-        # Training
         self.device = device
-        self.debug = debug
-        self.run_path = Path('runs', datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
         self.num_epochs = num_epochs
         self.lr = lr
         self.lr_gamma = lr_gamma
@@ -69,14 +103,18 @@ class Trainer():
         self.weight_decay = weight_decay
         self.num_warmup_steps = num_warmup_steps
         self.cooldown = cooldown
-        self.output_lines_per_epoch = output_lines_per_epoch
-        self.checkpoint_after_epoch = checkpoint_after_epoch
-        self.tests_per_epoch = tests_per_epoch
         self.checkpoint_path = checkpoint_path
         self.reset_lr = reset_lr
         self.splits_train = splits_train
         self.splits_test = splits_test
         self.subset = subset
+
+        self.output_lines_per_epoch = output_lines_per_epoch
+        self.checkpoint_after_epoch = checkpoint_after_epoch
+        self.tests_per_epoch = tests_per_epoch
+
+        self.debug = debug
+        self.run_path = Path('runs', datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
 
         self.data_train = []
         self.data_test = []
@@ -184,10 +222,7 @@ class Trainer():
     
 
     def save_config(self):
-        config_path = Path(self.run_path, 'config.json')
-        config = { key: value for key, value in vars(Config).items() if not '__' in key }
-        with open(config_path, 'w') as file:
-            file.write(json.dumps(config, indent='\t'))
+        OmegaConf.save(config=self.config, f=Path(self.run_path, 'config.json'))
 
 
     def collate(self, batch):
@@ -200,7 +235,7 @@ class Trainer():
         return torch.cat((source_tensor, pad_tensor))
 
 
-    def pad_target(self, target: Tensor, max_length: int) -> (Tensor, int):
+    def pad_target(self, target: Tensor, max_length: int) -> tuple[Tensor, int]:
         num_pad_tokens = max_length - target.shape[0]
         pad_index = len(target)
         return torch.cat((target, self.vocabulary.pad_token_tensor.repeat(num_pad_tokens))), pad_index
@@ -218,7 +253,7 @@ class Trainer():
         return padded_source
 
 
-    def padded_target_from_batch(self, batch) -> (Tensor, List[int]):
+    def padded_target_from_batch(self, batch) -> tuple[Tensor, List[int]]:
         target_indices = list(map(self.vocabulary.build_tokenized_target, [item[1] for item in batch]))
         max_length = self.max_target_length
         if not self.use_fixed_padding:

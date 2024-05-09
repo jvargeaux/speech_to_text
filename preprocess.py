@@ -5,11 +5,11 @@ import h5py
 import librosa, librosa.display
 import matplotlib.pyplot as plt
 import numpy as np
+from omegaconf import OmegaConf
 import pandas as pd
 import sounddevice as sd
 import torchaudio
 
-from config import Config
 from splits import SPLITS
 from util import ProgressBar
 
@@ -20,14 +20,15 @@ class Preprocessor():
     - dataset_url: Name of dataset split, check SPLITS enum for options
     '''
     def __init__(self, split: str=SPLITS.DEV_CLEAN.value):
+        self.config = OmegaConf.load('config.yaml')
         if split not in [item.value for item in SPLITS]:
             print('Invalid split name. Check splits.py for options.')
             return
         print('Dataset split:', split)
         # Set MFCC meta parameters
-        self.hop_length = Config.HOP_LENGTH  # number of samples to shift
-        self.n_fft = Config.N_FFT  # number of samples per fft (window size)
-        self.mfcc_depth = Config.MFCC_DEPTH
+        self.hop_length = self.config.audio.hop_length  # number of samples to shift
+        self.n_fft = self.config.audio.n_fft  # number of samples per fft (window size)
+        self.mfcc_depth = self.config.audio.mfcc_depth
         self.data_path = Path('data')
         self.split = split
         self.data = None

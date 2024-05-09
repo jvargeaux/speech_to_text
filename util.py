@@ -1,5 +1,6 @@
 import time
 
+
 class ProgressBar():
     def __init__(self, title: str='Progress'):
         self.title = title
@@ -21,3 +22,15 @@ class ProgressBar():
             f'{(elapsed // 60):02.0f}:{(elapsed % 60):02.0f}, {(remaining // 60):02.0f}:{(remaining % 60):02.0f} remaining', end='\r')
         if percentage >= 1:
             print()
+
+
+def pretty_print(object):
+    def _format(object, level: int=0):
+        if isinstance(object, dict):
+            formatted = ''
+            for key, value in object.items():
+                formatted += f'\n{chr(9) * level}{key}: {_format(value, level+1)}'
+            return formatted
+        else:
+            return f'{object}'
+    print(_format(object)[1:])  # Delete first \n character

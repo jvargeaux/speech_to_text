@@ -1,0 +1,37 @@
+audio:
+  model_sample_rate: 16000
+  hop_length: 160                        # number of samples to shift  |  16000 / 160: 100 per second
+  n_fft: 640                             # number of samples per fft (window size)
+  mfcc_depth: 80
+
+model:
+  d_model: 512
+  num_heads: 8
+  dropout: 0.3
+  max_source_length: 4000                # 50/second => 30s total | max: 3496
+  max_target_length: 200                 #                        | max: 86
+  max_vocab_size: 30000
+  num_layers: 6
+  batch_size: 16
+
+training:
+  num_epochs: 20
+  lr: 3e-5
+  lr_gamma: 0.9998
+  lr_min: 1e-7
+  weight_decay: 1e-2
+  num_warmup_steps: 3000
+  cooldown: 0                            # seconds every step, null or 0 = no cooldown
+  splits_train:
+  - train-other-500
+  - commonvoice-dev
+  splits_test:
+  - test-clean
+  subset: null                           # null = all
+  checkpoint_path: null                  # null = don't use
+  reset_lr: true
+
+output:
+  output_lines_per_epoch: 300
+  checkpoint_after_epoch: 1
+  tests_per_epoch: 10
