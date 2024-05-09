@@ -1,14 +1,16 @@
 import argparse
+from pathlib import Path
+
+import h5py
+import librosa, librosa.display
 import matplotlib.pyplot as plt
 import numpy as np
-import torchaudio
-import librosa, librosa.display
-from pathlib import Path
+import pandas as pd
 import sounddevice as sd
-import h5py
+import torchaudio
 
-from splits import SPLITS
 from config import Config
+from splits import SPLITS
 from util import ProgressBar
 
 
@@ -17,47 +19,88 @@ class Preprocessor():
     Arguments
     - dataset_url: Name of dataset split, check SPLITS enum for options
     '''
-    def __init__(self, split_train: str=SPLITS.DEV_CLEAN.value, split_test: str=SPLITS.TEST_CLEAN.value):
+    def __init__(self, split: str=SPLITS.DEV_CLEAN.value):
+        if split not in [item.value for item in SPLITS]:
+            print('Invalid split name. Check splits.py for options.')
+            return
+        print('Dataset split:', split)
         # Set MFCC meta parameters
         self.hop_length = Config.HOP_LENGTH  # number of samples to shift
         self.n_fft = Config.N_FFT  # number of samples per fft (window size)
         self.mfcc_depth = Config.MFCC_DEPTH
+        self.data_path = Path('data')
+        self.split = split
+        self.data = None
+        if split == SPLITS.COMMONVOICE_DEV.value:
+            self.load_commonvoice()
+        else:
+            self.load_librispeech()
 
-        self.data_train = None
-        self.data_test = None
-        self.split_train = split_train
-        self.split_test = split_test
-        print('Dataset train split:', split_train)
-        print('Dataset test split:', split_test)
-        self.download_dataset()
 
-    def download_dataset(self):
-        if self.split_train not in [item.value for item in SPLITS] or self.split_test not in [item.value for item in SPLITS]:
-            print('Invalid train or test split name. Check splits.py for options.')
+    def load_librispeech(self):
+        if not self.data_path.exists():
+            self.data_path.mkdir(parents=True)
+        print('Loading LibriSpeech...')
+        raw_data = torchaudio.datasets.LIBRISPEECH(root=self.data_path, url=self.split, download=True)
+        progress_bar = ProgressBar()
+        data = []
+        for index, item in enumerate(raw_data):
+            data.append({
+                'samples': item[0].numpy(),  # torch.Tensor
+                'sample_rate': item[1],
+                'transcript': item[2],
+                'speaker_id': item[3],
+                'chapter_id': item[4],
+                'sentence_id': item[5]
+            })
+            progress_bar.update(index + 1, len(raw_data))
+        self.data = data
+
+
+    def load_commonvoice(self):
+        commonvoice_path = Path(self.data_path, 'CommonVoice', 'cv-corpus-17.0-delta-2024-03-15', 'en')
+        validated_path = Path(commonvoice_path, 'validated.tsv')
+        if not validated_path.exists():
+            print('CommonVoice data does not exist.')
             return
-        data_path = Path('data')
-        if not data_path.exists():
-            data_path.mkdir(parents=True)
-        # Updated dataset from LibriLightLimited -> LibriSpeech (same format)
-        self.data_train = torchaudio.datasets.LIBRISPEECH(root=data_path, url=self.split_train, download=True)
-        self.data_test = torchaudio.datasets.LIBRISPEECH(root=data_path, url=self.split_test, download=True)
+        print('Loading CommonVoice...')
+        raw_data = pd.read_csv(validated_path, sep='\t')
+        data = []
+        progress_bar = ProgressBar()
+        for index, item in enumerate(raw_data.itertuples()):
+            samples, sample_rate = librosa.load(Path(commonvoice_path, 'clips', item.path))
+            data.append({
+                'samples': np.expand_dims(samples, axis=0),
+                'sample_rate': sample_rate,
+                'transcript': item.sentence,
+                'speaker_id': item.client_id,
+                'chapter_id': 0,
+                'sentence_id': item.sentence_id,
+                'age': item.age,
+                'gender': item.gender,
+                'accents': item.accents,
+                'variant': item.variant,
+                'locale': item.locale,
+            })
+            progress_bar.update(index + 1, len(raw_data))
+        self.data = data
 
-    def show_test_data(self, index: int=0, waveform=False, spectrogram=False, mfcc=False, play=False):
+
+    def output_data_sample(self, index: int=0, waveform=False, spectrogram=False, mfcc=False, play=False):
         if self.data_train is None:
             return
-        test = self.data_train.__getitem__(index)
-        samples, sample_rate, transcript, speaker_id, chapter_id, utterance_id = test
-        samples = samples.numpy()
+        test: dict = self.data_train.__getitem__(index)
+        samples = test['samples']
 
         print('-- Sample Data --')
         print(f'{samples=}')
         print(f'samples shape: {np.shape(samples)}')
-        print(f'{sample_rate=}')
-        print(f'{transcript=}')
-        print(f'{speaker_id=}')
-        print(f'{chapter_id=}')
-        print(f'{utterance_id=}')
-        duration = len(samples[0]) / sample_rate
+        print(f'{test["sample_rate"]=}')
+        print(f'{test["transcript"]=}')
+        print(f'{test["speaker_id"]=}')
+        print(f'{test["chapter_id"]=}')
+        print(f'{test["sentence_id"]=}')
+        duration = len(samples[0]) / test['sample_rate']
         print(f'{duration=}')
 
         # # frames = # samples / hop length
@@ -65,11 +108,11 @@ class Preprocessor():
 
         if play is True:
             # need to transpose array from one row [1][n] to one column [n, 1] (one channel)
-            sd.play(data=samples.T, samplerate=sample_rate)
+            sd.play(data=samples.T, samplerate=test['sample_rate'])
             sd.wait()
 
         if waveform is True:
-            librosa.display.waveshow(samples, sr=sample_rate)
+            librosa.display.waveshow(samples, sr=test['sample_rate'])
             plt.xlabel('Time')
             plt.ylabel('Amplitude')
             plt.show()
@@ -79,7 +122,7 @@ class Preprocessor():
             stft = stft[0]  # Remove first dimension (mono channel)
             spectrogram = np.abs(stft)
             log_spectrogram = librosa.amplitude_to_db(spectrogram)
-            librosa.display.specshow(log_spectrogram, sr=sample_rate, hop_length=self.hop_length)
+            librosa.display.specshow(log_spectrogram, sr=test['sample_rate'], hop_length=self.hop_length)
             plt.xlabel('Time')
             plt.ylabel('Frequency')
             plt.colorbar()
@@ -89,59 +132,46 @@ class Preprocessor():
             # Same as stft, remove first dimension
             mfccs = librosa.feature.mfcc(y=samples, n_fft=self.n_fft, hop_length=self.hop_length, n_mfcc=self.mfcc_depth)
             mfccs = mfccs[0]  # Remove first dimension (mono channel)
-            librosa.display.specshow(mfccs, sr=sample_rate, hop_length=self.hop_length)
+            librosa.display.specshow(mfccs, sr=test['sample_rate'], hop_length=self.hop_length)
             plt.xlabel('Time')
             plt.ylabel('MFCC')
             plt.colorbar()
             plt.show()
 
-    def process_audio(self, item, split: str):
-        samples, sample_rate, transcript, speaker_id, chapter_id, utterance_id = item
 
-        mfccs = librosa.feature.mfcc(y=samples.numpy(), n_fft=self.n_fft, hop_length=self.hop_length, n_mfcc=self.mfcc_depth)
+    def write_mfcc_data(self, item: dict, split: str):
+        mfccs = librosa.feature.mfcc(y=item['samples'], n_fft=self.n_fft, hop_length=self.hop_length, n_mfcc=self.mfcc_depth)
         mfcc_bands = mfccs[0]
         mfcc_frames = mfcc_bands.T  # (num_bands, num_frames) -> (num_frames, num_bands)
 
-        with h5py.File(Path('mfcc', split, f'{speaker_id}_{chapter_id}_{utterance_id}.hdf5'), 'w') as file:
+        with h5py.File(Path('mfcc', split, f"{item['speaker_id']}_{item['chapter_id']}_{item['sentence_id']}.hdf5"), 'w') as file:
             dataset = file.create_dataset('mfccs', data=mfcc_frames)
-            dataset.attrs['speaker_id'] = speaker_id
-            dataset.attrs['chapter_id'] = chapter_id
-            dataset.attrs['utterance_id'] = utterance_id
-            dataset.attrs['sample_rate'] = sample_rate
-            dataset.attrs['transcript'] = transcript
+            dataset.attrs['speaker_id'] = item['speaker_id']
+            dataset.attrs['chapter_id'] = item['chapter_id']
+            dataset.attrs['sentence_id'] = item['sentence_id']
+            dataset.attrs['sample_rate'] = item['sample_rate']
+            dataset.attrs['transcript'] = item['transcript']
+
 
     def preprocess(self):
-        if self.data_train is None or self.data_test is None:
+        if self.data is None:
             print('Data is empty. Aborted.')
             return
 
-        train_path = Path('mfcc', self.split_train)
-        test_path = Path('mfcc', self.split_test)
-
+        mfcc_path = Path('mfcc', self.split)
         print('Hop length:', self.hop_length)
         print('Samples per MFCC:', self.n_fft)
         print('MFCC depth:', self.mfcc_depth)
         print('Processing audio data...')
-
-        print('Train data:')
-        if not train_path.exists():
-            train_path.mkdir(parents=True)
-        if len(list(train_path.glob('*.hdf5'))) == 0:
+        if not mfcc_path.exists():
+            mfcc_path.mkdir(parents=True)
+        if len(list(mfcc_path.glob('*.hdf5'))) == 0:
             progress_bar = ProgressBar()
-            for x, item in enumerate(self.data_train):
-                self.process_audio(item, split=self.split_train)
-                progress_bar.update(x + 1, len(self.data_train))
-
-        print('Test data:')
-        if not test_path.exists():
-            test_path.mkdir(parents=True)
-        if len(list(test_path.glob('*.hdf5'))) == 0:
-            progress_bar = ProgressBar()
-            for x, item in enumerate(self.data_test):
-                self.process_audio(item, split=self.split_test)
-                progress_bar.update(x + 1, len(self.data_test))
-        
+            for x, item in enumerate(self.data):
+                self.write_mfcc_data(item, split=self.split)
+                progress_bar.update(x + 1, len(self.data))
         print('Preprocessing finished.')
+
 
     def read_preprocessed_data(self):
         files = list(Path('mfcc', self.split_train).glob('*.hdf5'))
@@ -153,16 +183,14 @@ class Preprocessor():
                 for attr in list(mfccs_dataset.attrs):
                     print(f'{attr}: {mfccs_dataset.attrs[attr]}')
 
+
 def main():
     parser = argparse.ArgumentParser(
         prog='S2T Preprocessor',
         description='Preprocess audio for the S2T transformer neural network',
         epilog='Epilogue sample text')
 
-    default_split_train = Config.SPLIT_TRAIN if Config.SPLIT_TRAIN is not None else SPLITS.TRAIN_CLEAN_100.value
-    default_split_test = Config.SPLIT_TEST if Config.SPLIT_TEST is not None else SPLITS.TEST_CLEAN.value
-    parser.add_argument('--split_train', type=str, nargs='?', default=default_split_train, help='Name of dataset split for training')
-    parser.add_argument('--split_test', type=str, nargs='?', default=default_split_test, help='Name of dataset split for testing (validation)')
+    parser.add_argument('--split', type=str, nargs='?', help='Name of dataset split')
     parser.add_argument('-d', '--display', type=int, default=-1, help='Index of one data sample to display')
     parser.add_argument('-w', '--waveform', action='store_true', help='Display waveform')
     parser.add_argument('-s', '--spectrogram', action='store_true', help='Display spectrogram')
@@ -172,10 +200,10 @@ def main():
 
     args = parser.parse_args()
 
-    preprocessor = Preprocessor(split_train=args.split_train, split_test=args.split_test)
+    preprocessor = Preprocessor(split=args.split)
 
     if args.display != -1:
-        preprocessor.show_test_data(
+        preprocessor.output_data_sample(
             index=args.display,
             waveform=True if args.waveform else False,
             spectrogram=True if args.spectrogram else False,
@@ -185,6 +213,7 @@ def main():
         preprocessor.read_preprocessed_data()
     else:
         preprocessor.preprocess()
+
 
 if __name__ == '__main__':
     main()

@@ -11,7 +11,6 @@ from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from splits import SPLITS
 from preprocess import Preprocessor
 from config import Config
 from src.model import Transformer
@@ -43,8 +42,8 @@ class Trainer():
                  checkpoint_path: Path | None,
                  reset_lr: bool,
                  cooldown: int | None,
-                 split_train: str,
-                 split_test: str,
+                 splits_train: list[str],
+                 splits_test: list[str],
                  subset: int | None=None,
                  device: str='cpu',
                  debug=False):
@@ -75,8 +74,8 @@ class Trainer():
         self.tests_per_epoch = tests_per_epoch
         self.checkpoint_path = checkpoint_path
         self.reset_lr = reset_lr
-        self.split_train = split_train
-        self.split_test = split_test
+        self.splits_train = splits_train
+        self.splits_test = splits_test
         self.subset = subset
 
         self.data_train = []
@@ -90,72 +89,74 @@ class Trainer():
         self.use_multiple = True
         self.use_fixed_padding = False
 
+
     def import_data(self):
-        train_path = Path('mfcc', self.split_train)
-        test_path = Path('mfcc', self.split_test)
-        train_files = list(train_path.glob('*.hdf5'))
-        test_files = list(test_path.glob('*.hdf5'))
-        if len(train_files) == 0 or len(test_files) == 0:
-            print(f'No data folder {train_path} detected. Preprocessing now...')
-            preprocessor = Preprocessor(split_train=self.split_train, split_test=self.split_test)
-            preprocessor.preprocess()
-            train_files = list(train_path.glob('*.hdf5'))
-            test_files = list(test_path.glob('*.hdf5'))
-            print()
+        print('Loading mfcc data...')
+        print('Train data:')
+        train_files = []
+        for split in self.splits_train:
+            files = list(Path('mfcc', split).glob('*.hdf5'))
+            if len(files) == 0:
+                preprocessor = Preprocessor(split=split)
+                preprocessor.preprocess()
+                files = list(Path('mfcc', split).glob('*.hdf5'))
+            train_files += files
+            print(f'\t{len(files)} files from {split}')
+
+        print('Test data:')
+        test_files = []
+        for split in self.splits_test:
+            files = list(Path('mfcc', split).glob('*.hdf5'))
+            if len(files) == 0:
+                preprocessor = Preprocessor(split=split)
+                preprocessor.preprocess()
+                files = list(Path('mfcc', split).glob('*.hdf5'))
+            test_files += files
+            print(f'\t{len(files)} files from {split}')
+
         if self.subset is not None:
             train_files = train_files[:self.subset]
             test_files = test_files[:self.subset]
 
-        print('Loading mfcc data...')
-
-        print('Train:')
-        progress_bar = ProgressBar()
+        progress_bar = ProgressBar(title='Train')
         data_train = []
         for i, file in enumerate(train_files):
             with h5py.File(file, 'r') as file_data:
-                data_train.append([file_data['mfccs'][:],
-                            file_data['mfccs'].attrs['sample_rate'],
-                            file_data['mfccs'].attrs['transcript'],
-                            file_data['mfccs'].attrs['speaker_id']])
+                data_train.append([file_data['mfccs'][:], file_data['mfccs'].attrs['transcript']])
             progress_bar.update(i + 1, len(train_files))
         self.data_train = data_train
 
-        print('Test:')
-        progress_bar = ProgressBar()
+        progress_bar = ProgressBar(title='Test')
         data_test = []
         for i, file in enumerate(test_files):
             with h5py.File(file, 'r') as file_data:
-                data_test.append([file_data['mfccs'][:],
-                            file_data['mfccs'].attrs['sample_rate'],
-                            file_data['mfccs'].attrs['transcript'],
-                            file_data['mfccs'].attrs['speaker_id']])
+                data_test.append([file_data['mfccs'][:], file_data['mfccs'].attrs['transcript']])
             progress_bar.update(i + 1, len(test_files))
         self.data_test = data_test
 
         print('Data loaded.')
+        print(f'\tTrain: {len(train_files)} files' + (' (subset)' if self.subset is not None else ''))
+        print(f'\tTest: {len(test_files)} files' + (' (subset)' if self.subset is not None else ''))
         print()
+
 
     def build_vocabulary(self):
         print('Building vocabulary...')
-        transcripts = [item[2] for item in self.data_train]
+        transcripts = [item[1] for item in self.data_train]
         self.vocabulary = Vocabulary(batch=transcripts, max_size=self.max_vocab_size, device=self.device)
         print('Vocabulary built.')
+        print('\tModel Vocab Size:', self.vocabulary.vocab_size)
         print()
-        print('Dataset Size (Train):', len(self.data_train))
-        print('Dataset Size (Test):', len(self.data_test))
-        print('Model Vocab Size:', self.vocabulary.vocab_size)
-        print()
+
 
     def load_checkpoint_vocabulary(self):
         print('Loading checkpoint vocabulary...')
         vocabulary_path = Path(self.checkpoint_path, 'vocabulary.pt')
         self.vocabulary = Vocabulary(vocab=torch.load(vocabulary_path), device=self.device)
         print('Vocabulary loaded.')
+        print('\tModel Vocab Size:', self.vocabulary.vocab_size)
         print()
-        print('Dataset Size (Train):', len(self.data_train))
-        print('Dataset Size (Test):', len(self.data_test))
-        print('Model Vocab Size:', self.vocabulary.vocab_size)
-        print()
+
 
     def verify_longest_sequence(self):
         longest_source_train = 0
@@ -164,14 +165,14 @@ class Trainer():
         longest_target_test = 0
         for item in self.data_train:
             source_length = len(item[0])
-            target_length = len(self.vocabulary.tokenize_sequence(item[2]))
+            target_length = len(self.vocabulary.tokenize_sequence(item[1]))
             if source_length > longest_source_train:
                 longest_source_train = source_length
             if target_length > longest_target_train:
                 longest_target_train = target_length
         for item in self.data_test:
             source_length = len(item[0])
-            target_length = len(self.vocabulary.tokenize_sequence(item[2]))
+            target_length = len(self.vocabulary.tokenize_sequence(item[1]))
             if source_length > longest_source_test:
                 longest_source_test = source_length
             if target_length > longest_target_test:
@@ -181,24 +182,29 @@ class Trainer():
         print('Longest source length (test):', f'{longest_source_test} (compressed 4x to {longest_source_test // 4})')
         print('Longest target length (test):', longest_target_test)
     
+
     def save_config(self):
         config_path = Path(self.run_path, 'config.json')
         config = { key: value for key, value in vars(Config).items() if not '__' in key }
         with open(config_path, 'w') as file:
-            file.write(json.dumps(config))
+            file.write(json.dumps(config, indent='\t'))
+
 
     def collate(self, batch):
         return batch
+
 
     def pad_source(self, source, max_length: int, mfcc_dim: int) -> Tensor:
         source_tensor = torch.tensor(source, device=self.device)
         pad_tensor = torch.zeros((max_length - source_tensor.shape[0], mfcc_dim), device=self.device)
         return torch.cat((source_tensor, pad_tensor))
 
+
     def pad_target(self, target: Tensor, max_length: int) -> (Tensor, int):
         num_pad_tokens = max_length - target.shape[0]
         pad_index = len(target)
         return torch.cat((target, self.vocabulary.pad_token_tensor.repeat(num_pad_tokens))), pad_index
+
 
     def padded_source_from_batch(self, batch) -> Tensor:
         mfcc_dim = len(batch[0][0][0])
@@ -211,8 +217,9 @@ class Trainer():
             [self.pad_source(source=item[0], max_length=max_length, mfcc_dim=mfcc_dim) for item in batch]).to(self.device)
         return padded_source
 
+
     def padded_target_from_batch(self, batch) -> (Tensor, List[int]):
-        target_indices = list(map(self.vocabulary.build_tokenized_target, [item[2] for item in batch]))
+        target_indices = list(map(self.vocabulary.build_tokenized_target, [item[1] for item in batch]))
         max_length = self.max_target_length
         if not self.use_fixed_padding:
             lengths = [item.shape[0] for item in target_indices]
@@ -224,6 +231,7 @@ class Trainer():
         padded_targets, pad_indices = zip(*padded)
 
         return torch.stack(list(padded_targets)).to(self.device), list(pad_indices)
+
 
     def unpad_and_flatten_batch(self, target_batch: Tensor, prediction_batch: Tensor, pad_indices: List[int]):
         unpadded_targets = []
@@ -237,8 +245,10 @@ class Trainer():
             unpadded_predictions.append(unpadded_prediction[:-1])
         return torch.cat(unpadded_targets).to(self.device), torch.cat(unpadded_predictions).to(self.device)
 
+
     def flatten_batch(self, target_batch: Tensor, prediction_batch: Tensor):
         return target_batch.reshape(-1), prediction_batch.reshape(-1, self.vocabulary.vocab_size)
+
 
     def check_model_for_randomness(self):
         print()
@@ -259,6 +269,7 @@ class Trainer():
             print('Success. No randomness detected.')
         print()
 
+
     def save_models(self, epoch: int, global_step: int):
         save_directory = Path(self.run_path, f'models_{epoch}')
         if not Path.exists(save_directory):
@@ -268,6 +279,7 @@ class Trainer():
         torch.save(self.vocabulary.vocab, f'{save_directory}/vocabulary.pt')
         with open(Path(save_directory, 'global_step.json'), 'w') as file:
             file.write(json.dumps({ 'global_step': global_step }))
+
 
     def save_images(self):
         pass
@@ -291,7 +303,9 @@ class Trainer():
         # train_writer.add_figure('Confusion Matrix', plt.gcf(), global_step=global_step)
         # plt.clf()
 
+
     def train(self):
+        print('-----  Init  -----')
         try:
             self.import_data()
         except:
@@ -382,6 +396,8 @@ class Trainer():
             test_every_step = num_steps
         print()
         print()
+
+        print('-----  Training  -----')
         start_step = 0
         if self.checkpoint_path is not None:
             step_path = Path(self.checkpoint_path, 'global_step.json')
@@ -532,7 +548,7 @@ class Trainer():
                     # Take random sample from dataset
                     random_index = torch.randint(low=0, high=len(self.data_train), size=(1,)).item()
                     random_sample_source = torch.tensor(self.data_train[random_index][0], device=self.device).unsqueeze(0)
-                    random_sample_target = self.vocabulary.build_tokenized_target(self.data_train[random_index][2]).unsqueeze(0)
+                    random_sample_target = self.vocabulary.build_tokenized_target(self.data_train[random_index][1]).unsqueeze(0)
 
                     # Copy data across batch size
                     random_sample_source = random_sample_source.expand((self.batch_size, random_sample_source.shape[1], random_sample_source.shape[2]))

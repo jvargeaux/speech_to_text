@@ -73,10 +73,10 @@ def main():
                         default=Config.CHECKPOINT_PATH, help='Save model checkpoint & sample prediction after x number of epochs')
     parser.add_argument('--reset_lr', action='store_true', default=Config.RESET_LR,
                         help='Should reset optimizer when loading checkpoint')
-    parser.add_argument('--split_train', '-st', type=str,
-                        default=Config.SPLIT_TRAIN, help='Name of dataset split for training')
-    parser.add_argument('--split_test', '-sv', type=str,
-                        default=Config.SPLIT_TEST, help='Name of dataset split for testing (validation)')
+    parser.add_argument('--splits_train', '-st', type=list[str],
+                        default=Config.SPLITS_TRAIN, help='Name of dataset splits for training')
+    parser.add_argument('--splits_test', '-sv', type=list[str],
+                        default=Config.SPLITS_TEST, help='Name of dataset splits for testing (validation)')
     parser.add_argument('--subset', '-sub', type=int, nargs='?',
                         default=Config.SUBSET, help='Use a smaller subset with x number of files. None = use all')
     parser.add_argument('--debug', action='store_true', help='Run through only one training example for debugging')
@@ -110,8 +110,8 @@ def main():
     print('Max target length:', args.max_target_length)
     print('Max vocab size:', args.max_vocab_size)
     print('Dropout probability:', args.dropout)
-    print('Split (train):', args.split_train)
-    print('Split (test):', args.split_test)
+    print('Splits (train):', args.splits_train)
+    print('Splits (test):', args.splits_test)
     print('Subset:', args.subset)
     print('LR:', args.lr)
     print('LR gamma:', args.lr_gamma)
@@ -149,8 +149,8 @@ def main():
                       tests_per_epoch=args.tests_per_epoch,
                       checkpoint_path=args.checkpoint_path,
                       reset_lr=args.reset_lr,
-                      split_train=args.split_train,
-                      split_test=args.split_test,
+                      splits_train=args.splits_train,
+                      splits_test=args.splits_test,
                       subset=args.subset)
     trainer.train()
 

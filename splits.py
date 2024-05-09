@@ -8,3 +8,4 @@ class SPLITS(Enum):
     TRAIN_OTHER_500 = 'train-other-500'
     TEST_CLEAN = 'test-clean'
     TEST_OTHER = 'test-other'
+    COMMONVOICE_DEV = 'commonvoice-dev'
