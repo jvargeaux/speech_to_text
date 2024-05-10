@@ -1,20 +1,25 @@
+from __future__ import annotations
+
 import copy
 import math
-import numpy as np
+from typing import TYPE_CHECKING
+
 import torch
-from torch import nn, Tensor
-from torch.nn.functional import pad, softmax, log_softmax
-from typing import Optional
-from src.vocabulary import Vocabulary
+from torch import Tensor, nn
+from torch.nn.functional import log_softmax, softmax
+
+if TYPE_CHECKING:
+    from src.vocabulary import Vocabulary
 
 
-class Logger():
-    def __init__(self, debug=True):
+class Logger:
+    def __init__(self, debug: bool = True) -> None:
         self.debug = debug
 
-    def __call__(self, *args):
+    def __call__(self, *args: any) -> None:
         if self.debug:
             print(*args)
+
 
 log = Logger(debug=False)
 
@@ -42,7 +47,8 @@ class AudioEmbedder1d(nn.Module):
     Ex: 187 chunks of 13 mfccs, target length of 20 words, word embedding dimension of 64
     (1, 187, 13) -> (1, 20, 64)
     '''
-    def __init__(self, embed_dim: int, device, mfcc_depth: int):
+
+    def __init__(self, embed_dim: int, device: str, mfcc_depth: int) -> None:
         super().__init__()
         conv_depth = embed_dim // 4
         sequence_compression_rate = 2
@@ -57,7 +63,7 @@ class AudioEmbedder1d(nn.Module):
         self.norm = nn.LayerNorm(embed_dim, device=self.device)
         self.fc = nn.Linear(in_features=embed_dim, out_features=embed_dim, device=self.device)
 
-    def forward(self, source: Tensor):
+    def forward(self, source: Tensor) -> Tensor:
         # Input shape: (N, seq_len, d_mfcc)
         out = source.permute(0, 2, 1)  # (N, d_mfcc, seq_len)
         out = self.conv(out)  # (N, conv_depth, seq_len/2)
@@ -90,7 +96,7 @@ class AudioEmbedder2d(nn.Module):
     Ex: 187 chunks of 13 mfccs, target length of 20 words, word embedding dimension of 64
     (1, 187, 13) -> (1, 20, 64)
     '''
-    def __init__(self, embed_dim: int, device, mfcc_depth: int):
+    def __init__(self, embed_dim: int, device: str, mfcc_depth: int) -> None:
         super().__init__()
         conv1_depth = 16
         conv2_depth = 64
@@ -110,7 +116,7 @@ class AudioEmbedder2d(nn.Module):
         self.norm = nn.LayerNorm(linear_in_depth, device=self.device)
         self.fc = nn.Linear(in_features=linear_in_depth, out_features=self.embed_dim, device=self.device)
 
-    def forward(self, source: Tensor):
+    def forward(self, source: Tensor) -> Tensor:
         # Input shape: (N, seq_len, d_mfcc)
         N = source.shape[0]
         out = source.unsqueeze(1)  # Add dim for conv: (N, 1, seq_len, d_mfcc)
@@ -165,7 +171,7 @@ class WordEmbedder(nn.Module):
     [z, z, z, z]  | <-- "You"
     ```
     '''
-    def __init__(self, d_model: int, vocab_size: int):
+    def __init__(self, d_model: int, vocab_size: int) -> None:
         super().__init__()
         self.d_model = d_model
         # If we have not pre-trained, we have no word vectors yet
@@ -173,7 +179,7 @@ class WordEmbedder(nn.Module):
         self.embeddings_lut = nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
         self.norm = nn.LayerNorm(d_model)
 
-    def forward(self, x: Tensor):
+    def forward(self, x: Tensor) -> Tensor:
         # Average out the magnitude of the vectors by multiplying by the square root of the dimensions
         # Ex: [2, 2, 2] (d = 3)
         # Magnitude: sqrt(2^2 + 2^2 + 2^2) = sqrt(3 * 2^2) = sqrt(3) * 2 = sqrt(d) * 2
@@ -214,7 +220,7 @@ class PositionalEncoding(nn.Module):
     --
     https://pytorch.org/tutorials/beginner/transformer_tutorial.html
     '''
-    def __init__(self, d_model: int, dropout: float | None, max_length: int = 5000):
+    def __init__(self, d_model: int, dropout: float | None, max_length: int = 5000) -> None:
         super().__init__()
         self.dropout = nn.Dropout(p=dropout) if dropout is not None else None
 
@@ -234,12 +240,12 @@ class PositionalEncoding(nn.Module):
         Parameters:
         - x: Tensor, shape `[sequence_length, embed_dim]`
         '''
-        x = x + self.positional_encoding[:x.size(1)]  # cut to sequence_length (1), not batch_size (0)
+        x += self.positional_encoding[:x.size(1)]  # cut to sequence_length (1), not batch_size (0)
         return self.dropout(x) if self.dropout is not None else x
 
 
 class MultiheadAttention(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, dropout: float | None, device):
+    def __init__(self, d_model: int, num_heads: int, dropout: float | None, device: str) -> None:
         super().__init__()
         self.device = device
         self.d_model = d_model
@@ -252,17 +258,18 @@ class MultiheadAttention(nn.Module):
 
         self.attention = None
 
-    def _attention(self, query: Tensor, key: Tensor, value: Tensor, mask=None, dropout=None):
+    def _attention(self, query: Tensor, key: Tensor, value: Tensor, mask: Tensor | None = None,
+                   dropout: float | None = None) -> Tensor:
         scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.head_dim)
         if mask is not None:
-            trimmed_mask = mask[:,:,:scores.shape[-2],:scores.shape[-1]]
+            trimmed_mask = mask[:, :, :scores.shape[-2], :scores.shape[-1]]
             scores = scores.masked_fill(trimmed_mask == 0, -1e9)
         prob = softmax(scores, dim=-1)
         if dropout is not None:
             prob = dropout(prob)
         return torch.matmul(prob, value), prob
 
-    def forward(self, query, key, value, mask = None):
+    def forward(self, query: Tensor, key: Tensor, value: Tensor, mask: Tensor | None = None) -> Tensor:
         N = query.shape[0]  # batch size
 
         if mask is not None:
@@ -294,7 +301,8 @@ class MultiheadAttention(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    def __init__(self, d_model: int, dropout: float | None, num_heads: int, device, forward_expansion: int = 4):
+    def __init__(self, d_model: int, dropout: float | None, num_heads: int,
+                 device: str, forward_expansion: int = 4) -> None:
         super().__init__()
         self.d_model = d_model
         self.attention = MultiheadAttention(d_model=d_model, num_heads=num_heads, dropout=dropout, device=device)
@@ -303,11 +311,11 @@ class EncoderBlock(nn.Module):
         self.feed_forward = nn.Sequential(
             nn.Linear(d_model, d_model * forward_expansion),
             nn.ReLU(),
-            nn.Linear(d_model * forward_expansion, d_model)
+            nn.Linear(d_model * forward_expansion, d_model),
         )
         self.dropout = nn.Dropout(dropout) if dropout is not None else None
 
-    def forward(self, x: Tensor, mask: Optional[Tensor] = None):
+    def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
         out = x
         attention = self.attention(out, out, out, mask)
         out = self.dropout(self.norm1(attention + out)) if self.dropout is not None else self.norm1(attention + out)
@@ -344,8 +352,8 @@ class Encoder(nn.Module):
     Output
     ```
     '''
-    def __init__(self, d_model: int, num_layers: int, dropout: float | None, num_heads: int, device, forward_expansion: int = 4,
-                 mask: Optional[Tensor] = None):
+    def __init__(self, d_model: int, num_layers: int, dropout: float | None, num_heads: int,
+                 device: str, forward_expansion: int = 4) -> None:
         super().__init__()
         self.d_model = d_model
         self.num_layers = num_layers
@@ -353,7 +361,7 @@ class Encoder(nn.Module):
                                           device=device, forward_expansion=forward_expansion)
         self.encoder_layers = nn.ModuleList([copy.deepcopy(self.encoder_block) for _ in range(num_layers)])
 
-    def forward(self, x: Tensor, mask: Optional[Tensor] = None):
+    def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
         '''
         Pass the inputs (and mask) through the layers in turn.
         '''
@@ -364,7 +372,8 @@ class Encoder(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, d_model: int, dropout: float | None, num_heads: int, device, forward_expansion: int = 4):
+    def __init__(self, d_model: int, dropout: float | None, num_heads: int,
+                 device: str, forward_expansion: int = 4) -> None:
         super().__init__()
         self.d_model = d_model
         self.attention = MultiheadAttention(d_model=d_model, num_heads=num_heads, dropout=dropout, device=device)
@@ -374,12 +383,12 @@ class DecoderBlock(nn.Module):
         self.feed_forward = nn.Sequential(
             nn.Linear(d_model, d_model * forward_expansion),
             nn.ReLU(),
-            nn.Linear(d_model * forward_expansion, d_model)
+            nn.Linear(d_model * forward_expansion, d_model),
         )
         self.dropout = nn.Dropout(dropout) if dropout is not None else None
 
-    def forward(self, x: Tensor, encoder_out: Tensor, source_mask: Optional[Tensor] = None,
-                target_mask: Optional[Tensor] = None):
+    def forward(self, x: Tensor, encoder_out: Tensor, source_mask: Tensor | None = None,
+                target_mask: Tensor | None = None) -> Tensor:
         out = x
         self_attention = self.attention(out, out, out, target_mask)
         out = self.dropout(self.norm1(self_attention + out)) if self.dropout is not None else self.norm1(self_attention + out)
@@ -428,8 +437,8 @@ class Decoder(nn.Module):
     Output Probabilities
     ```
     '''
-    def __init__(self, d_model: int, num_layers: int, dropout: float | None, num_heads: int, device, forward_expansion: int = 4,
-                 mask: Optional[Tensor] = None):
+    def __init__(self, d_model: int, num_layers: int, dropout: float | None, num_heads: int,
+                 device: str, forward_expansion: int = 4) -> None:
         super().__init__()
         self.d_model = d_model
         self.num_layers = num_layers
@@ -437,8 +446,8 @@ class Decoder(nn.Module):
                                           device=device, forward_expansion=forward_expansion)
         self.decoder_layers = nn.ModuleList([copy.deepcopy(self.decoder_block) for _ in range(num_layers)])
 
-    def forward(self, x: Tensor, encoder_out: Tensor, source_mask: Optional[Tensor] = None,
-                target_mask: Optional[Tensor] = None):
+    def forward(self, x: Tensor, encoder_out: Tensor, source_mask: Tensor | None = None,
+                target_mask: Tensor | None = None) -> Tensor:
         '''
         Pass the inputs (and mask) through the layers in turn.
         '''
@@ -449,7 +458,7 @@ class Decoder(nn.Module):
 
 
 class TargetMask(nn.Module):
-    def __init__(self, batch_size: int, max_length: int, device):
+    def __init__(self, batch_size: int, max_length: int, device: str) -> None:
         super().__init__()
         self.batch_size = batch_size
         self.device = device
@@ -460,7 +469,6 @@ class TargetMask(nn.Module):
         mask = self.mask[:self.batch_size, :target_length, :target_length]
         non_padded = (target != pad_token_tensor)  # (N, seq_len)
         non_padded = non_padded.unsqueeze(-1).expand(N, target_length, target_length)  # (N, seq_len, seq_len)
-
         return torch.logical_and(non_padded, mask)
 
 
@@ -478,8 +486,18 @@ class Transformer(nn.Module):
     The vanilla transformer is comprised of an Encoder and a Decoder, which
     share a common weight matrix.
     '''
-    def __init__(self, vocabulary: Vocabulary, d_model: int, batch_size: int, num_layers: int, dropout: float,
-                 num_heads: int, max_source_length: int, max_target_length: int, mfcc_depth: int, device, debug = False):
+    def __init__(self,
+                 vocabulary: Vocabulary,
+                 d_model: int,
+                 batch_size: int,
+                 num_layers: int,
+                 dropout: float,
+                 num_heads: int,
+                 max_source_length: int,
+                 max_target_length: int,
+                 mfcc_depth: int,
+                 device: str,
+                 debug: bool = False) -> None:
         super().__init__()
         self.vocabulary = vocabulary
         vocab_size = vocabulary.vocab_size
@@ -494,10 +512,11 @@ class Transformer(nn.Module):
         self.linear = nn.Linear(d_model, vocab_size)
         self.target_mask = TargetMask(batch_size=batch_size, max_length=max_target_length, device=device)
 
-    def source_mask(self, source: Tensor):
+    @staticmethod
+    def source_mask(source: Tensor) -> Tensor:
         return (source != 0)
 
-    def forward(self, encoder_source: Tensor, decoder_source: Tensor):
+    def forward(self, encoder_source: Tensor, decoder_source: Tensor) -> tuple:
         '''
         Source (mfccs) shape: (batch_size, num_chunks, mfcc_length)
         Target (indices) shape: (batch_size, sequence_length)

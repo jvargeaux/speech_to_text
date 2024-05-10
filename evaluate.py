@@ -1,16 +1,18 @@
 import argparse
-import math
 from pathlib import Path
+
 import librosa
 import soundfile as sf
 import torch
 from torch import Tensor
+
 from src.model import Transformer
 from src.vocabulary import Vocabulary
-from config import Config
 
 
-def main():
+def main() -> None:
+    Config = []
+
     parser = argparse.ArgumentParser(
              prog='S2T Evaluator',
              description='Evaluate the S2T model',
@@ -35,7 +37,7 @@ def main():
         mfccs = mfccs.T  # (num_bands, num_frames) -> (num_frames, num_bands)
         processed_files.append({
             'name': file,
-            'mfccs': mfccs
+            'mfccs': mfccs,
         })
 
     # Build model

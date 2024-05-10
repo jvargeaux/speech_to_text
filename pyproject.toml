@@ -1,0 +1,40 @@
+[tool.ruff]
+line-length = 135
+
+[tool.ruff.lint.mccabe]
+max-complexity = 30
+
+[tool.ruff.lint.pylint]
+max-args = 30
+max-branches = 40
+max-locals = 70
+max-nested-blocks = 10
+max-statements = 200
+
+[tool.ruff.lint]
+preview = true
+select = ["ALL"]
+ignore = [
+	"CPY",
+	"D",
+	"E201",
+	"E202",
+	"E303",
+	"EM102",
+	"ERA001",
+	"F841",
+	"FBT",
+	"FURB118",
+	"ICN",
+	"INP",
+	"N806",
+	"Q000",
+	"Q001",
+	"Q002",
+	"RET504",
+	"RET505",
+	"S101",
+	"S105",
+	"T20",
+	"TRY003",
+]

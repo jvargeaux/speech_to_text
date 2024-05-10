@@ -2,28 +2,28 @@ import argparse
 from pathlib import Path
 
 import h5py
-import librosa, librosa.display
+import librosa
+import librosa.display
 import matplotlib.pyplot as plt
 import numpy as np
-from omegaconf import OmegaConf
 import pandas as pd
 import sounddevice as sd
 import torchaudio
+from omegaconf import OmegaConf
 
 from splits import SPLITS
 from util import ProgressBar
 
 
-class Preprocessor():
+class Preprocessor:
     '''
     Arguments
     - dataset_url: Name of dataset split, check SPLITS enum for options
     '''
-    def __init__(self, split: str=SPLITS.DEV_CLEAN.value):
+    def __init__(self, split: str = SPLITS.DEV_CLEAN.value) -> None:
         self.config = OmegaConf.load('config.yaml')
         if split not in [item.value for item in SPLITS]:
-            print('Invalid split name. Check splits.py for options.')
-            return
+            raise ValueError(f'Invalid split name "{split}". Check splits.py for options.')
         print('Dataset split:', split)
         # Set MFCC meta parameters
         self.hop_length = self.config.audio.hop_length  # number of samples to shift
@@ -38,7 +38,7 @@ class Preprocessor():
             self.load_librispeech()
 
 
-    def load_librispeech(self):
+    def load_librispeech(self) -> None:
         if not self.data_path.exists():
             self.data_path.mkdir(parents=True)
         print('Loading LibriSpeech...')
@@ -52,13 +52,13 @@ class Preprocessor():
                 'transcript': item[2],
                 'speaker_id': item[3],
                 'chapter_id': item[4],
-                'sentence_id': item[5]
+                'sentence_id': item[5],
             })
             progress_bar.update(index + 1, len(raw_data))
         self.data = data
 
 
-    def load_commonvoice(self):
+    def load_commonvoice(self) -> None:
         commonvoice_path = Path(self.data_path, 'CommonVoice', 'cv-corpus-17.0-delta-2024-03-15', 'en')
         validated_path = Path(commonvoice_path, 'validated.tsv')
         if not validated_path.exists():
@@ -87,10 +87,11 @@ class Preprocessor():
         self.data = data
 
 
-    def output_data_sample(self, index: int=0, waveform=False, spectrogram=False, mfcc=False, play=False):
-        if self.data_train is None:
+    def output_data_sample(self, index: int = 0, waveform: bool = False, spectrogram: bool = False,
+                           mfcc: bool = False, play: bool = False) -> None:
+        if self.data is None:
             return
-        test: dict = self.data_train.__getitem__(index)
+        test: dict = self.data[index]
         samples = test['samples']
 
         print('-- Sample Data --')
@@ -140,7 +141,7 @@ class Preprocessor():
             plt.show()
 
 
-    def write_mfcc_data(self, item: dict, split: str):
+    def write_mfcc_data(self, item: dict, split: str) -> None:
         mfccs = librosa.feature.mfcc(y=item['samples'], n_fft=self.n_fft, hop_length=self.hop_length, n_mfcc=self.mfcc_depth)
         mfcc_bands = mfccs[0]
         mfcc_frames = mfcc_bands.T  # (num_bands, num_frames) -> (num_frames, num_bands)
@@ -154,7 +155,7 @@ class Preprocessor():
             dataset.attrs['transcript'] = item['transcript']
 
 
-    def preprocess(self):
+    def preprocess(self) -> None:
         if self.data is None:
             print('Data is empty. Aborted.')
             return
@@ -174,7 +175,7 @@ class Preprocessor():
         print('Preprocessing finished.')
 
 
-    def read_preprocessed_data(self):
+    def read_preprocessed_data(self) -> None:
         files = list(Path('mfcc', self.split_train).glob('*.hdf5'))
         for file in files[:5]:
             with h5py.File(file, 'r') as file_data:
@@ -185,16 +186,16 @@ class Preprocessor():
                     print(f'{attr}: {mfccs_dataset.attrs[attr]}')
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         prog='S2T Preprocessor',
         description='Preprocess audio for the S2T transformer neural network',
         epilog='Epilogue sample text')
 
-    parser.add_argument('--split', type=str, nargs='?', help='Name of dataset split')
+    parser.add_argument('-s', '--split', type=str, nargs='?', help='Name of dataset split')
     parser.add_argument('-d', '--display', type=int, default=-1, help='Index of one data sample to display')
     parser.add_argument('-w', '--waveform', action='store_true', help='Display waveform')
-    parser.add_argument('-s', '--spectrogram', action='store_true', help='Display spectrogram')
+    parser.add_argument('-g', '--spectrogram', action='store_true', help='Display spectrogram')
     parser.add_argument('-m', '--mfcc', action='store_true', help='Display MFCCs')
     parser.add_argument('-p', '--play', action='store_true', help='Play audio file')
     parser.add_argument('-r', '--read-mfcc', action='store_true', help='Read preprocessed mfcc data')
@@ -206,10 +207,10 @@ def main():
     if args.display != -1:
         preprocessor.output_data_sample(
             index=args.display,
-            waveform=True if args.waveform else False,
-            spectrogram=True if args.spectrogram else False,
-            mfcc=True if args.mfcc else False,
-            play=True if args.play else False)
+            waveform=bool(args.waveform),
+            spectrogram=bool(args.spectrogram),
+            mfcc=bool(args.mfcc),
+            play=bool(args.play))
     elif args.read_mfcc:
         preprocessor.read_preprocessed_data()
     else:

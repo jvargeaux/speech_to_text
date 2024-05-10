@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class SPLITS(Enum):
     DEV_CLEAN = 'dev-clean'
     DEV_OTHER = 'dev-other'

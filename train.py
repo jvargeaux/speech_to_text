@@ -1,9 +1,9 @@
 import argparse
-from pathlib import Path
 import shutil
+from pathlib import Path
 
-from omegaconf import OmegaConf
 import torch
+from omegaconf import OmegaConf
 
 from src.trainer import Trainer
 from util import pretty_print
@@ -27,7 +27,7 @@ def clear_runs() -> bool:
     return True
 
 
-def main():
+def main() -> None:
     config = OmegaConf.load('config.yaml')
     config_override = None
     if Path('config_override.yaml').exists():
@@ -72,7 +72,8 @@ def main():
     parser.add_argument('--cooldown', '-cd', type=int, nargs='?',
                         default=config.training.cooldown, help='Number of seconds to sleep after each epoch')
     parser.add_argument('--checkpoint_path', '-cp', type=Path, nargs='?',
-                        default=config.training.checkpoint_path, help='Save model checkpoint & sample prediction after x number of epochs')
+                        default=config.training.checkpoint_path,
+                        help='Save model checkpoint & sample prediction after x number of epochs')
     parser.add_argument('--reset_lr', action='store_true', default=config.training.reset_lr,
                         help='Should reset optimizer when loading checkpoint')
     parser.add_argument('--splits_train', '-st', type=list[str],
@@ -84,7 +85,8 @@ def main():
     parser.add_argument('--output_lines_per_epoch', '-le', type=int, nargs='?',
                         default=config.output.output_lines_per_epoch, help='Number of lines of output per epoch')
     parser.add_argument('--checkpoint_after_epoch', '-se', type=int, nargs='?',
-                        default=config.output.checkpoint_after_epoch, help='Save model checkpoint & sample prediction after x number of epochs')
+                        default=config.output.checkpoint_after_epoch,
+                        help='Save model checkpoint & sample prediction after x number of epochs')
     parser.add_argument('--tests_per_epoch', '-te', type=int, nargs='?',
                         default=config.output.tests_per_epoch, help='Number of tests (validations) to perform every epoch')
     parser.add_argument('--debug', action='store_true', help='Run through only one training example for debugging')
@@ -142,6 +144,7 @@ def main():
                       splits_test=args.splits_test,
                       subset=args.subset)
     trainer.train()
+
 
 if __name__ == '__main__':
     main()

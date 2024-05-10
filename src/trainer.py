@@ -1,13 +1,14 @@
-from datetime import datetime
-from pathlib import Path
-from typing import List
+from __future__ import annotations
+
 import json
 import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import h5py
-import matplotlib.pyplot as plt
-from omegaconf import OmegaConf
 import torch
+from omegaconf import OmegaConf
 from torch import Tensor
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
@@ -16,13 +17,15 @@ from torch.utils.tensorboard import SummaryWriter
 from preprocess import Preprocessor
 from src.model import Transformer
 from src.vocabulary import Vocabulary
-from src.metrics import Metrics
 from util import ProgressBar
 
+if TYPE_CHECKING:
+    import numpy as np
 
-class Trainer():
+
+class Trainer:
     def __init__(self,
-                 config,
+                 config: OmegaConf | dict,
                  d_model: int,
                  num_layers: int,
                  batch_size: int,
@@ -46,9 +49,9 @@ class Trainer():
                  cooldown: int | None,
                  splits_train: list[str],
                  splits_test: list[str],
-                 subset: int | None=None,
-                 device: str='cpu',
-                 debug=False):
+                 subset: int | None = None,
+                 device: str = 'cpu',
+                 debug: bool = False) -> None:
 
         self.device = device
         self.config = config
@@ -76,7 +79,7 @@ class Trainer():
         # self.splits_train: list[str] = config['training']['splits_train']
         # self.splits_test: list[str] = config['training']['splits_test']
         # self.subset: int | None = config['training']['subset']
-        
+
         # self.output_lines_per_epoch = config['output']['output_lines_per_epoch']
         # self.checkpoint_after_epoch = config['output']['checkpoint_after_epoch']
         # self.tests_per_epoch = config['output']['tests_per_epoch']
@@ -114,7 +117,7 @@ class Trainer():
         self.tests_per_epoch = tests_per_epoch
 
         self.debug = debug
-        self.run_path = Path('runs', datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
+        self.run_path = Path('runs', datetime.now(tz=timezone(timedelta(hours=+9))).strftime("%Y_%m_%d_%H_%M_%S"))
 
         self.data_train = []
         self.data_test = []
@@ -122,13 +125,13 @@ class Trainer():
         self.model = None
         self.optimizer = None
 
-        self.use_amp = True if self.device == 'cuda' else False
+        self.use_amp = self.device == 'cuda'
         self.scaler = None
         self.use_multiple = True
         self.use_fixed_padding = False
 
 
-    def import_data(self):
+    def import_data(self) -> None:
         print('Loading mfcc data...')
         print('Train data:')
         train_files = []
@@ -178,7 +181,7 @@ class Trainer():
         print()
 
 
-    def build_vocabulary(self):
+    def build_vocabulary(self) -> None:
         print('Building vocabulary...')
         transcripts = [item[1] for item in self.data_train]
         self.vocabulary = Vocabulary(batch=transcripts, max_size=self.max_vocab_size, device=self.device)
@@ -187,7 +190,7 @@ class Trainer():
         print()
 
 
-    def load_checkpoint_vocabulary(self):
+    def load_checkpoint_vocabulary(self) -> None:
         print('Loading checkpoint vocabulary...')
         vocabulary_path = Path(self.checkpoint_path, 'vocabulary.pt')
         self.vocabulary = Vocabulary(vocab=torch.load(vocabulary_path), device=self.device)
@@ -196,7 +199,7 @@ class Trainer():
         print()
 
 
-    def verify_longest_sequence(self):
+    def verify_longest_sequence(self) -> None:
         longest_source_train = 0
         longest_target_train = 0
         longest_source_test = 0
@@ -204,32 +207,30 @@ class Trainer():
         for item in self.data_train:
             source_length = len(item[0])
             target_length = len(self.vocabulary.tokenize_sequence(item[1]))
-            if source_length > longest_source_train:
-                longest_source_train = source_length
-            if target_length > longest_target_train:
-                longest_target_train = target_length
+            longest_source_train = max(source_length, longest_source_train)
+            longest_target_train = max(target_length, longest_target_train)
         for item in self.data_test:
             source_length = len(item[0])
             target_length = len(self.vocabulary.tokenize_sequence(item[1]))
-            if source_length > longest_source_test:
-                longest_source_test = source_length
-            if target_length > longest_target_test:
-                longest_target_test = target_length
+            longest_source_test = max(source_length, longest_source_test)
+            longest_target_test = max(target_length, longest_target_test)
         print('Longest source length (train):', f'{longest_source_train} (compressed 4x to {longest_source_train // 4})')
         print('Longest target length (train):', longest_target_train)
         print('Longest source length (test):', f'{longest_source_test} (compressed 4x to {longest_source_test // 4})')
         print('Longest target length (test):', longest_target_test)
-    
 
-    def save_config(self):
+
+    def save_config(self) -> None:
         OmegaConf.save(config=self.config, f=Path(self.run_path, 'config.json'))
 
 
-    def collate(self, batch):
+    @staticmethod
+    def collate(batch: Tensor) -> Tensor:
         return batch
 
 
-    def pad_source(self, source, max_length: int, mfcc_dim: int) -> Tensor:
+    def pad_source(self, source: np.ndarray, max_length: int, mfcc_dim: int) -> Tensor:
+        print(type(source))
         source_tensor = torch.tensor(source, device=self.device)
         pad_tensor = torch.zeros((max_length - source_tensor.shape[0], mfcc_dim), device=self.device)
         return torch.cat((source_tensor, pad_tensor))
@@ -241,7 +242,7 @@ class Trainer():
         return torch.cat((target, self.vocabulary.pad_token_tensor.repeat(num_pad_tokens))), pad_index
 
 
-    def padded_source_from_batch(self, batch) -> Tensor:
+    def padded_source_from_batch(self, batch: Tensor) -> Tensor:
         mfcc_dim = len(batch[0][0][0])
         max_length = self.max_source_length
         if not self.use_fixed_padding:
@@ -253,7 +254,7 @@ class Trainer():
         return padded_source
 
 
-    def padded_target_from_batch(self, batch) -> tuple[Tensor, List[int]]:
+    def padded_target_from_batch(self, batch: Tensor) -> tuple[Tensor, list[int]]:
         target_indices = list(map(self.vocabulary.build_tokenized_target, [item[1] for item in batch]))
         max_length = self.max_target_length
         if not self.use_fixed_padding:
@@ -268,10 +269,10 @@ class Trainer():
         return torch.stack(list(padded_targets)).to(self.device), list(pad_indices)
 
 
-    def unpad_and_flatten_batch(self, target_batch: Tensor, prediction_batch: Tensor, pad_indices: List[int]):
+    def unpad_and_flatten_batch(self, target_batch: Tensor, prediction_batch: Tensor, pad_indices: list[int]) -> Tensor:
         unpadded_targets = []
         unpadded_predictions = []
-        for i in range(0, len(pad_indices)):
+        for i in range(len(pad_indices)):
             pad_index = pad_indices[i]
             unpadded_target = target_batch[i][:pad_index]
             unpadded_prediction = prediction_batch[i][:pad_index]
@@ -281,11 +282,11 @@ class Trainer():
         return torch.cat(unpadded_targets).to(self.device), torch.cat(unpadded_predictions).to(self.device)
 
 
-    def flatten_batch(self, target_batch: Tensor, prediction_batch: Tensor):
+    def flatten_batch(self, target_batch: Tensor, prediction_batch: Tensor) -> Tensor:
         return target_batch.reshape(-1), prediction_batch.reshape(-1, self.vocabulary.vocab_size)
 
 
-    def check_model_for_randomness(self):
+    def check_model_for_randomness(self) -> None:
         print()
         print('Checking model for randomness...')
         random_source = torch.rand((self.batch_size, 80, self.mfcc_depth), device=self.device)
@@ -305,18 +306,18 @@ class Trainer():
         print()
 
 
-    def save_models(self, epoch: int, global_step: int):
+    def save_models(self, epoch: int, global_step: int) -> None:
         save_directory = Path(self.run_path, f'models_{epoch}')
         if not Path.exists(save_directory):
             Path.mkdir(save_directory, parents=True)
         torch.save(self.model.state_dict(), f'{save_directory}/model.pt')
         torch.save(self.optimizer.state_dict(), f'{save_directory}/optimizer.pt')
         torch.save(self.vocabulary.vocab, f'{save_directory}/vocabulary.pt')
-        with open(Path(save_directory, 'global_step.json'), 'w') as file:
+        with Path(save_directory, 'global_step.json').open('w') as file:
             file.write(json.dumps({ 'global_step': global_step }))
 
 
-    def save_images(self):
+    def save_images(self) -> None:
         pass
         # metrics = Metrics(debug=self.debug)
         # metrics.add_heatmap(data=padded_sources[0], ylabel='Source MFCCs')
@@ -339,11 +340,11 @@ class Trainer():
         # plt.clf()
 
 
-    def train(self):
+    def train(self) -> None:
         print('-----  Init  -----')
         try:
             self.import_data()
-        except:
+        except FileNotFoundError:
             return
         if self.checkpoint_path is not None:
             if not Path.exists(self.checkpoint_path):
@@ -356,8 +357,10 @@ class Trainer():
         self.verify_longest_sequence()
 
         # Prepare training data
-        train_loader = DataLoader(dataset=self.data_train, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
-        test_loader = DataLoader(dataset=self.data_test, batch_size=self.batch_size, shuffle=True, drop_last=True, collate_fn=self.collate)
+        train_loader = DataLoader(dataset=self.data_train, batch_size=self.batch_size,
+                                  shuffle=True, drop_last=True, collate_fn=self.collate)
+        test_loader = DataLoader(dataset=self.data_test, batch_size=self.batch_size,
+                                 shuffle=True, drop_last=True, collate_fn=self.collate)
         num_steps = len(train_loader)
 
         # Build model
@@ -383,7 +386,8 @@ class Trainer():
         # Set optimizer and criterion
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr, betas=(0.9, 0.98), eps=1e-9,
                                           weight_decay=self.weight_decay)
-        criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1, ignore_index=self.vocabulary.pad_token_tensor.item()).to(self.device)
+        criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.1,
+                                              ignore_index=self.vocabulary.pad_token_tensor.item()).to(self.device)
 
         if self.checkpoint_path is not None:
             self.optimizer.load_state_dict(torch.load(Path(self.checkpoint_path, 'optimizer.pt')))
@@ -394,8 +398,9 @@ class Trainer():
         # Create LR schedulers
         warmup_scheduler = None
         if self.checkpoint_path is None and self.num_warmup_steps > 0:
-            warmup_lambda = lambda step: (step / self.num_warmup_steps)
-            warmup_scheduler = lr_scheduler.LambdaLR(optimizer=self.optimizer, lr_lambda=warmup_lambda)
+            def warmup(step: float) -> float:
+                return step / self.num_warmup_steps
+            warmup_scheduler = lr_scheduler.LambdaLR(optimizer=self.optimizer, lr_lambda=warmup)
         training_scheduler = lr_scheduler.ExponentialLR(optimizer=self.optimizer, gamma=self.lr_gamma)
         # training_scheduler = lr_scheduler.CosineAnnealingLR(optimizer=self.optimizer,
         #                                                     T_max=(self.num_epochs * num_steps) - self.num_warmup_steps,
@@ -437,7 +442,7 @@ class Trainer():
         if self.checkpoint_path is not None:
             step_path = Path(self.checkpoint_path, 'global_step.json')
             if Path.exists(step_path):
-                with open(step_path, 'r') as file:
+                with step_path.open('r') as file:
                     step_file = json.load(file)
                     start_step = step_file['global_step']
             print('Continuing training from checkpoint model...')
@@ -510,8 +515,8 @@ class Trainer():
                         train_writer.add_scalar('Other/2 Tokens Per Sequence', running_tokens_per_sequence, global_step=global_step)
                         train_writer.add_scalar('Other/3 Step Time', step_time, global_step=global_step)
                         train_writer.add_histogram('Vocab Distribution', torch.mean(prediction_flat, dim=0), global_step=global_step)
-                        print(f'Epoch: {(epoch+1):>3}/{self.num_epochs}  {(elapsed // 60):>3.0f}m {(elapsed % 60):>2.0f}s  |  '
-                              f'Step: {(i+1):>4}/{num_steps}  {step_time:>6.2f}s  |  '
+                        print(f'Epoch: {(epoch + 1):>3}/{self.num_epochs}  {(elapsed // 60):>3.0f}m {(elapsed % 60):>2.0f}s  |  '
+                              f'Step: {(i + 1):>4}/{num_steps}  {step_time:>6.2f}s  |  '
                               f'Tokens/sec: {running_tokens_per_sec:>6.1f}  |  '
                               f'Loss: {running_loss_per_sequence:>8.5f}  |  '
                               f'WER: {word_error_rate:>6.1%}  |  '
@@ -522,7 +527,7 @@ class Trainer():
                         running_tokens = 0
                         running_loss = 0
                         running_error = 0
-                    
+
                     if test_every_step is not None and (i + 1) % test_every_step == 0:
                         # Test (Validation)
                         print('Running validation...')
@@ -532,23 +537,24 @@ class Trainer():
                         test_loss = 0
                         test_error = 0
                         self.model.eval()
-                        for i, batch in enumerate(test_loader):
-                            padded_sources = self.padded_source_from_batch(batch=batch)
-                            padded_targets, pad_indices = self.padded_target_from_batch(batch=batch)
+                        for test_batch in test_loader:
+                            padded_sources = self.padded_source_from_batch(batch=test_batch)
+                            padded_targets, pad_indices = self.padded_target_from_batch(batch=test_batch)
 
                             with torch.no_grad():
                                 # Becomes no-op if self.use_amp is False
                                 # NOTE: passing self.device to device_type gives error, keep on 'cuda' even if device is cpu
                                 with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=self.use_amp):
                                     (out, embedded_source, pos_encoded_source, encoder_out, embedded_target, pos_encoded_target,
-                                    target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
+                                    target_mask, decoder_out) = \
+                                        self.model(encoder_source=padded_sources, decoder_source=padded_targets)
 
                                     target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
                                     prediction_indices = torch.argmax(prediction_flat, dim=-1)
 
                                     loss = criterion(prediction_flat, target_flat)
 
-                                    test_count += len(batch)
+                                    test_count += len(test_batch)
                                     test_tokens += len(target_flat)
                                     test_loss += loss.item()
                                     test_error += torch.sum((prediction_indices != target_flat).float()).item()
@@ -558,7 +564,7 @@ class Trainer():
 
                         test_elapsed = time.time() - test_start
                         test_word_error_rate = test_error / test_tokens
-                        test_tokens_per_sequence = test_tokens / test_count
+                        # test_tokens_per_sequence = test_tokens / test_count
                         test_loss_per_sequence = test_loss / test_count
 
                         test_writer.add_scalar('Metrics/1 WER', test_word_error_rate, global_step=global_step)
@@ -575,7 +581,7 @@ class Trainer():
 
                 # Save models & output model sample
                 if self.checkpoint_after_epoch is not None and (epoch + 1) % self.checkpoint_after_epoch == 0:
-                    self.save_models(epoch=epoch+1, global_step=global_step)
+                    self.save_models(epoch=epoch + 1, global_step=global_step)
                     print()
                     print('Models saved.')
                     self.model.eval()
@@ -586,7 +592,8 @@ class Trainer():
                     random_sample_target = self.vocabulary.build_tokenized_target(self.data_train[random_index][1]).unsqueeze(0)
 
                     # Copy data across batch size
-                    random_sample_source = random_sample_source.expand((self.batch_size, random_sample_source.shape[1], random_sample_source.shape[2]))
+                    random_sample_source = random_sample_source.expand((self.batch_size,
+                                                                        random_sample_source.shape[1], random_sample_source.shape[2]))
                     random_sample_target = random_sample_target.expand((self.batch_size, random_sample_target.shape[1]))
 
                     # Iterate through the random sample target sequence and output the prediction

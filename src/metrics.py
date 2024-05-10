@@ -1,16 +1,24 @@
+from __future__ import annotations
+
 import math
+from typing import TYPE_CHECKING
+
 import matplotlib.pyplot as plt
 import seaborn
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-from torch import Tensor
+from matplotlib import figure
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 
-class Metrics():
-    def __init__(self, debug=False):
+class Metrics:
+    def __init__(self, debug: bool = False) -> None:
         self.plots = []
         self.debug = debug
 
-    def draw_confusion_matrix(self, target, predicted, xlabel = None, ylabel = None):
+    @staticmethod
+    def draw_confusion_matrix(target: Tensor, predicted: Tensor, xlabel: str | None = None, ylabel: str | None = None) -> None:
         cm = confusion_matrix(target, predicted)
         display = ConfusionMatrixDisplay(confusion_matrix=cm)
         display.plot()
@@ -19,21 +27,20 @@ class Metrics():
         if ylabel is not None:
             plt.ylabel(ylabel)
 
-    def add_heatmap(self, data: Tensor, xlabel = None, ylabel = None):
+    def add_heatmap(self, data: Tensor, xlabel: str | None = None, ylabel: str | None = None) -> None:
         self.plots.append({
             'data': data.clone().detach().cpu(),
             'xlabel': xlabel,
-            'ylabel': ylabel
+            'ylabel': ylabel,
         })
 
-    def draw_heatmaps(self):
+    def draw_heatmaps(self) -> figure:
         num_cols = math.ceil(math.sqrt(len(self.plots)))
         num_rows = math.ceil(len(self.plots) / num_cols)
         # At least 2x2 grid
-        if num_rows < 2:
-            num_rows = 2
-        if num_cols < 2:
-            num_cols = 2
+        MIN_DIM = 2
+        num_rows = max(num_rows, MIN_DIM)
+        num_cols = max(num_cols, MIN_DIM)
         fig, ax = plt.subplots(nrows=num_rows, ncols=num_cols)
 
         row = 0
@@ -51,7 +58,8 @@ class Metrics():
                 row += 1
         return fig
 
-    def show_heatmap(self, data, xlabel = None, ylabel = None):
+    @staticmethod
+    def show_heatmap(data: Tensor, xlabel: str | None = None, ylabel: str | None = None) -> None:
         data_clone = data.clone().detach().requires_grad_(False)
         seaborn.heatmap(data=data_clone)
         if xlabel is not None:

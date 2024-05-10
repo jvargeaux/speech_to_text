@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 import torch
 from torch import Tensor
 from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import build_vocab_from_iterator, Vocab
+from torchtext.vocab import Vocab, build_vocab_from_iterator
 
 
-class Vocabulary():
-    def __init__(self, batch=None, vocab: Vocab=None, max_size: int | None=None, device=None):
+class Vocabulary:
+    def __init__(self, batch: Tensor | None = None, vocab: Vocab = None, max_size: int | None = None, device: str = 'cpu') -> None:
         # Go through all batches of data, and expand the vocabulary
         self.device = device
         self.tokenizer = get_tokenizer('basic_english')
@@ -25,7 +27,7 @@ class Vocabulary():
         if vocab is not None:
             self.load_vocab(vocab)
 
-    def init_vocab(self, batch):
+    def init_vocab(self, batch: Tensor) -> None:
         self.vocab = build_vocab_from_iterator(map(self.tokenizer, batch),
                                                specials=[self.unk_token, self.sos_token, self.eos_token, self.pad_token],
                                                max_tokens=self.max_size)
@@ -33,27 +35,27 @@ class Vocabulary():
         self.vocab_size = len(self.vocab)
         self.init_token_tensors()
 
-    def load_vocab(self, vocab: Vocab):
+    def load_vocab(self, vocab: Vocab) -> None:
         self.vocab = vocab
         self.vocab_size = len(self.vocab)
         self.init_token_tensors()
-    
-    def init_token_tensors(self):
+
+    def init_token_tensors(self) -> None:
         self.sos_token_tensor = torch.tensor(self.vocab([self.sos_token]), dtype=torch.long, device=self.device)
         self.eos_token_tensor = torch.tensor(self.vocab([self.eos_token]), dtype=torch.long, device=self.device)
         self.pad_token_tensor = torch.tensor(self.vocab([self.pad_token]), dtype=torch.long, device=self.device)
         self.unk_token_tensor = torch.tensor(self.vocab([self.unk_token]), dtype=torch.long, device=self.device)
 
-    def tokenize_sequence(self, sequence: str):
-        return [self.sos_token] + self.tokenizer(sequence) + [self.eos_token]
+    def tokenize_sequence(self, sequence: str) -> list:
+        return [self.sos_token, *self.tokenizer(sequence), self.eos_token]
 
-    def build_tokenized_target(self, source_sequence: str):
+    def build_tokenized_target(self, source_sequence: str) -> Tensor:
         tokenized = self.tokenize_sequence(source_sequence)
         return torch.tensor(self.vocab(tokenized), dtype=torch.long, device=self.device)
 
-    def get_tensor_from_sequence(self, source_sequence: str):
+    def get_tensor_from_sequence(self, source_sequence: str) -> Tensor:
         return torch.tensor(self.vocab(self.tokenizer(source_sequence)), dtype=torch.long, device=self.device)
 
-    def get_sequence_from_tensor(self, indices: Tensor):
+    def get_sequence_from_tensor(self, indices: Tensor) -> list:
         return self.vocab.lookup_tokens(indices=list(indices))
         # return self.vocab.lookup_token(index)
