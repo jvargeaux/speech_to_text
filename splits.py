@@ -10,3 +10,4 @@ class SPLITS(Enum):
     TEST_CLEAN = 'test-clean'
     TEST_OTHER = 'test-other'
     COMMONVOICE_DEV = 'commonvoice-dev'
+    COMMONVOICE_TRAIN = 'commonvoice-train'

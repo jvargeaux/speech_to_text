@@ -23,11 +23,51 @@ if TYPE_CHECKING:
     import numpy as np
 
 
+def pad_source(source: np.ndarray, max_length: int, device: str) -> Tensor:
+    source_tensor = torch.tensor(source, device=device)
+    pad_tensor = torch.zeros((max_length - source_tensor.shape[0], source_tensor.size(dim=-1)), device=device)
+    return torch.cat((source_tensor, pad_tensor))
+
+
+def pad_target(target: Tensor, max_length: int, vocabulary: Vocabulary) -> tuple[Tensor, int]:
+    num_pad_tokens = max_length - target.shape[0]
+    pad_index = len(target)
+    return torch.cat((target, vocabulary.pad_token_tensor.repeat(num_pad_tokens))), pad_index
+
+
+def padded_source_from_batch(batch: list, max_source_length: int, use_fixed_padding: bool, device: str) -> Tensor:
+    max_length = max_source_length
+    if not use_fixed_padding:
+        lengths = [len(item[0]) for item in batch]
+        max_length = max(lengths)
+
+    padded_source = torch.stack(
+        [pad_source(source=item[0], max_length=max_length, device=device) for item in batch]).to(device)
+    return padded_source
+
+
+def padded_target_from_batch(batch: list, vocabulary: Vocabulary, max_target_length: int,
+                             use_fixed_padding: bool, device: str) -> tuple[Tensor, list[int]]:
+    target_indices = list(map(vocabulary.build_tokenized_target, [item[1] for item in batch]))
+    max_length = max_target_length
+    if not use_fixed_padding:
+        lengths = [item.shape[0] for item in target_indices]
+        max_length = max(lengths)
+
+    # Produces [(padded_target, pad_index), ...]
+    padded = [pad_target(target=item, max_length=max_length, vocabulary=vocabulary) for item in target_indices]
+    # Convert to ((padded_target, ...), (pad_index, ...)), need to convert to lists
+    padded_targets, pad_indices = zip(*padded)
+
+    return torch.stack(list(padded_targets)).to(device), list(pad_indices)
+
+
 class Trainer:
     def __init__(self,
                  config: OmegaConf | dict,
                  d_model: int,
-                 num_layers: int,
+                 num_encoder_layers: int,
+                 num_decoder_layers: int,
                  batch_size: int,
                  dropout: float,
                  num_heads: int,
@@ -41,9 +81,10 @@ class Trainer:
                  lr_min: float,
                  weight_decay: float | None,
                  num_warmup_steps: int | None,
-                 output_lines_per_epoch: int,
+                 output_every_num_steps: int,
                  checkpoint_after_epoch: int | None,
                  tests_per_epoch: int | None,
+                 num_samples_to_output: int | None,
                  checkpoint_path: Path | None,
                  reset_lr: bool,
                  cooldown: int | None,
@@ -51,10 +92,14 @@ class Trainer:
                  splits_test: list[str],
                  subset: int | None = None,
                  device: str = 'cpu',
-                 debug: bool = False) -> None:
+                 debug: bool = False,
+                 run_name: str | None = None) -> None:
 
         self.device = device
         self.config = config
+
+        assert self.config.audio.model_sample_rate % self.config.audio.hop_length == 0
+        self.mfcc_per_second = self.config.audio.model_sample_rate // self.config.audio.hop_length
 
         # self.mfcc_depth = config['audio']['mfcc_depth']
 
@@ -80,7 +125,7 @@ class Trainer:
         # self.splits_test: list[str] = config['training']['splits_test']
         # self.subset: int | None = config['training']['subset']
 
-        # self.output_lines_per_epoch = config['output']['output_lines_per_epoch']
+        # self.output_every_num_steps = config['output']['output_every_num_steps']
         # self.checkpoint_after_epoch = config['output']['checkpoint_after_epoch']
         # self.tests_per_epoch = config['output']['tests_per_epoch']
 
@@ -90,10 +135,11 @@ class Trainer:
         self.mfcc_depth = mfcc_depth
 
         self.d_model = d_model
-        self.num_layers = num_layers
+        self.num_encoder_layers = num_encoder_layers
+        self.num_decoder_layers = num_decoder_layers
         self.dropout = dropout
         self.num_heads = num_heads
-        self.max_source_length = max_source_length
+        self.max_source_length = max_source_length * self.mfcc_per_second
         self.max_target_length = max_target_length
         self.max_vocab_size = max_vocab_size
         self.batch_size = batch_size
@@ -112,12 +158,14 @@ class Trainer:
         self.splits_test = splits_test
         self.subset = subset
 
-        self.output_lines_per_epoch = output_lines_per_epoch
+        self.output_every_num_steps = output_every_num_steps
         self.checkpoint_after_epoch = checkpoint_after_epoch
         self.tests_per_epoch = tests_per_epoch
+        self.num_samples_to_output = num_samples_to_output
 
         self.debug = debug
-        self.run_path = Path('runs', datetime.now(tz=timezone(timedelta(hours=+9))).strftime("%Y_%m_%d_%H_%M_%S"))
+        self.run_name = run_name if run_name is not None else datetime.now(tz=timezone(timedelta(hours=+9))).strftime("%Y_%m_%d_%H_%M_%S")
+        self.run_path = Path('runs', self.run_name)
 
         self.data_train = []
         self.data_test = []
@@ -128,7 +176,7 @@ class Trainer:
         self.use_amp = self.device == 'cuda'
         self.scaler = None
         self.use_multiple = True
-        self.use_fixed_padding = False
+        self.use_fixed_padding = True
 
 
     def import_data(self) -> None:
@@ -138,8 +186,8 @@ class Trainer:
         for split in self.splits_train:
             files = list(Path('mfcc', split).glob('*.hdf5'))
             if len(files) == 0:
-                preprocessor = Preprocessor(split=split)
-                preprocessor.preprocess()
+                preprocessor = Preprocessor()
+                preprocessor.preprocess(split=split)
                 files = list(Path('mfcc', split).glob('*.hdf5'))
             train_files += files
             print(f'\t{len(files)} files from {split}')
@@ -149,16 +197,20 @@ class Trainer:
         for split in self.splits_test:
             files = list(Path('mfcc', split).glob('*.hdf5'))
             if len(files) == 0:
-                preprocessor = Preprocessor(split=split)
-                preprocessor.preprocess()
+                preprocessor = Preprocessor()
+                preprocessor.preprocess(split=split)
                 files = list(Path('mfcc', split).glob('*.hdf5'))
             test_files += files
             print(f'\t{len(files)} files from {split}')
+        
+        import random
+        random.shuffle(train_files)
+        random.shuffle(test_files)
 
         if self.subset is not None:
             train_files = train_files[:self.subset]
             test_files = test_files[:self.subset]
-
+        
         progress_bar = ProgressBar(title='Train')
         data_train = []
         for i, file in enumerate(train_files):
@@ -199,25 +251,62 @@ class Trainer:
         print()
 
 
-    def verify_longest_sequence(self) -> None:
+    def verify_and_prune_sequence_length(self) -> None:
+        pruned_data_train = []
+        pruned_data_test = []
         longest_source_train = 0
         longest_target_train = 0
         longest_source_test = 0
         longest_target_test = 0
+        num_train_source_overlow = 0
+        num_train_target_overlow = 0
+        num_test_source_overlow = 0
+        num_test_target_overlow = 0
+
         for item in self.data_train:
             source_length = len(item[0])
             target_length = len(self.vocabulary.tokenize_sequence(item[1]))
             longest_source_train = max(source_length, longest_source_train)
             longest_target_train = max(target_length, longest_target_train)
+            if source_length > self.max_source_length:
+                num_train_source_overlow += 1
+            if target_length > self.max_target_length:
+                num_train_target_overlow += 1
+            if source_length <= self.max_source_length and target_length <= self.max_target_length:
+                pruned_data_train.append(item)
+        
         for item in self.data_test:
             source_length = len(item[0])
             target_length = len(self.vocabulary.tokenize_sequence(item[1]))
             longest_source_test = max(source_length, longest_source_test)
             longest_target_test = max(target_length, longest_target_test)
-        print('Longest source length (train):', f'{longest_source_train} (compressed 4x to {longest_source_train // 4})')
+            if source_length > self.max_source_length:
+                num_test_source_overlow += 1
+            if target_length > self.max_target_length:
+                num_test_target_overlow += 1
+            if source_length <= self.max_source_length and target_length <= self.max_target_length:
+                pruned_data_test.append(item)
+        
+        print('Longest source length (train):', longest_source_train)
         print('Longest target length (train):', longest_target_train)
-        print('Longest source length (test):', f'{longest_source_test} (compressed 4x to {longest_source_test // 4})')
+        print('Longest source length (test):', longest_source_test)
         print('Longest target length (test):', longest_target_test)
+
+        num_train_items_removed = len(self.data_train) - len(pruned_data_train)
+        num_test_items_removed = len(self.data_test) - len(pruned_data_test)
+
+        self.data_train = pruned_data_train
+        self.data_test = pruned_data_test
+
+        print()
+        if num_train_items_removed > 0:
+            print(f'Removed {num_train_items_removed} train items due to max length overflow.')
+            print(f'\tSource: {num_train_source_overlow}')
+            print(f'\tTarget: {num_train_target_overlow}')
+        if num_test_items_removed > 0:
+            print(f'Removed {num_test_items_removed} test items due to max length overflow.')
+            print(f'\tSource: {num_test_source_overlow}')
+            print(f'\tTarget: {num_test_target_overlow}')
 
 
     def save_config(self) -> None:
@@ -227,46 +316,6 @@ class Trainer:
     @staticmethod
     def collate(batch: Tensor) -> Tensor:
         return batch
-
-
-    def pad_source(self, source: np.ndarray, max_length: int, mfcc_dim: int) -> Tensor:
-        print(type(source))
-        source_tensor = torch.tensor(source, device=self.device)
-        pad_tensor = torch.zeros((max_length - source_tensor.shape[0], mfcc_dim), device=self.device)
-        return torch.cat((source_tensor, pad_tensor))
-
-
-    def pad_target(self, target: Tensor, max_length: int) -> tuple[Tensor, int]:
-        num_pad_tokens = max_length - target.shape[0]
-        pad_index = len(target)
-        return torch.cat((target, self.vocabulary.pad_token_tensor.repeat(num_pad_tokens))), pad_index
-
-
-    def padded_source_from_batch(self, batch: Tensor) -> Tensor:
-        mfcc_dim = len(batch[0][0][0])
-        max_length = self.max_source_length
-        if not self.use_fixed_padding:
-            lengths = [len(item[0]) for item in batch]
-            max_length = max(lengths)
-
-        padded_source = torch.stack(
-            [self.pad_source(source=item[0], max_length=max_length, mfcc_dim=mfcc_dim) for item in batch]).to(self.device)
-        return padded_source
-
-
-    def padded_target_from_batch(self, batch: Tensor) -> tuple[Tensor, list[int]]:
-        target_indices = list(map(self.vocabulary.build_tokenized_target, [item[1] for item in batch]))
-        max_length = self.max_target_length
-        if not self.use_fixed_padding:
-            lengths = [item.shape[0] for item in target_indices]
-            max_length = max(lengths)
-
-        # Produces [(padded_target, pad_index), ...]
-        padded = [self.pad_target(target=item, max_length=max_length) for item in target_indices]
-        # Convert to ((padded_target, ...), (pad_index, ...)), need to convert to lists
-        padded_targets, pad_indices = zip(*padded)
-
-        return torch.stack(list(padded_targets)).to(self.device), list(pad_indices)
 
 
     def unpad_and_flatten_batch(self, target_batch: Tensor, prediction_batch: Tensor, pad_indices: list[int]) -> Tensor:
@@ -289,8 +338,8 @@ class Trainer:
     def check_model_for_randomness(self) -> None:
         print()
         print('Checking model for randomness...')
-        random_source = torch.rand((self.batch_size, 80, self.mfcc_depth), device=self.device)
-        random_target = torch.randint(low=0, high=20, size=(self.batch_size, 22), device=self.device).to(torch.long)
+        random_source = torch.rand((self.batch_size, self.max_source_length, self.mfcc_depth), device=self.device)
+        random_target = torch.randint(low=0, high=1000, size=(self.batch_size, self.max_target_length), device=self.device).to(torch.long)
 
         self.model.eval()
         with torch.no_grad():
@@ -354,7 +403,7 @@ class Trainer:
             self.load_checkpoint_vocabulary()
         else:
             self.build_vocabulary()
-        self.verify_longest_sequence()
+        self.verify_and_prune_sequence_length()
 
         # Prepare training data
         train_loader = DataLoader(dataset=self.data_train, batch_size=self.batch_size,
@@ -371,7 +420,8 @@ class Trainer:
                                  num_heads=self.num_heads,
                                  max_source_length=self.max_source_length,
                                  max_target_length=self.max_target_length,
-                                 num_layers=self.num_layers,
+                                 num_encoder_layers=self.num_encoder_layers,
+                                 num_decoder_layers=self.num_decoder_layers,
                                  device=self.device,
                                  mfcc_depth=self.mfcc_depth,
                                  debug=self.debug)
@@ -420,19 +470,23 @@ class Trainer:
         self.save_config()
         train_writer = SummaryWriter(self.run_path)
         test_writer = SummaryWriter(test_path)
-        graph_source = self.padded_source_from_batch(batch=self.data_train[:self.batch_size])
-        graph_target, _ = self.padded_target_from_batch(batch=self.data_train[:self.batch_size])
+        graph_source = padded_source_from_batch(batch=self.data_train[:self.batch_size],
+                                                max_source_length=self.max_source_length,
+                                                use_fixed_padding=self.use_fixed_padding,
+                                                device=self.device)
+        graph_target, _ = padded_target_from_batch(batch=self.data_train[:self.batch_size],
+                                                   vocabulary=self.vocabulary,
+                                                   max_target_length=self.max_target_length,
+                                                   use_fixed_padding=self.use_fixed_padding,
+                                                   device=self.device)
         print('Creating tensorboard graph...')
         train_writer.add_graph(self.model, (graph_source, graph_target))
         print('Graph created.')
 
         self.save_models(epoch=0, global_step=0)
 
-        print_every_step = num_steps // self.output_lines_per_epoch
-        if print_every_step <= 0:
-            print_every_step = num_steps
         test_every_step = num_steps // self.tests_per_epoch if self.tests_per_epoch is not None else None
-        if test_every_step <= 0:
+        if test_every_step is not None and test_every_step <= 0:
             test_every_step = num_steps
         print()
         print()
@@ -469,22 +523,84 @@ class Trainer:
                     else:
                         scheduler = training_scheduler
 
-                    padded_sources = self.padded_source_from_batch(batch=batch)
-                    padded_targets, pad_indices = self.padded_target_from_batch(batch=batch)
+                    padded_sources = padded_source_from_batch(batch=batch,
+                                                              max_source_length=self.max_source_length,
+                                                              use_fixed_padding=self.use_fixed_padding,
+                                                              device=self.device)
+                    padded_targets, pad_indices = padded_target_from_batch(batch=batch,
+                                                                           vocabulary=self.vocabulary,
+                                                                           max_target_length=self.max_target_length,
+                                                                           use_fixed_padding=self.use_fixed_padding,
+                                                                           device=self.device)
 
                     # Becomes no-op if self.use_amp is False
                     # NOTE: passing self.device to device_type gives error, keep on 'cuda' even if device is cpu
                     with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=self.use_amp):
-                        (out, embedded_source, pos_encoded_source, encoder_out, embedded_target, pos_encoded_target,
-                        target_mask, decoder_out) = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
+                        (out, embedded_source, pos_encoded_source, encoder_out, encoder_attn_weights,
+                         embedded_target, pos_encoded_target, target_mask, decoder_out, decoder_self_attn_weights, decoder_cross_attn_weights) = \
+                            self.model(encoder_source=padded_sources, decoder_source=padded_targets)
+                        
+                        # Check Attention Weights
+                        # summed_attn_weights = encoder_attn_weights.sum(dim=-1)  # [num_encoder_blocks, batch_size, num_heads, seq_len]
+                        # print(encoder_attn_weights.size())
+                        # print(summed_attn_weights.size())
+                        # print(f'Attention: {encoder_attn_weights[0][0][0][:10][:10]}')
+                        # print(f'Source: {padded_sources[0][:10][:10]}')
 
-                        target_flat, prediction_flat = self.flatten_batch(padded_targets, out)
+                        # Shift targets so that predictions_flat is predicting next token in target
+                        # unshifted_prediction = torch.argmax(out, dim=-1)
+                        # unshifted_target = padded_targets
+
+                        shifted_prediction = out[:, :-1]
+                        shifted_target = padded_targets[:, 1:]
+
+                        # print("\nunshifted_prediction")
+                        # print(unshifted_prediction.size())
+                        # print(unshifted_prediction[0][:3])
+
+                        # print("\nunshifted_target")
+                        # print(unshifted_target.size())
+                        # print(unshifted_target[0][:3])
+
+                        # print("\n\nshifted_prediction")
+                        # print(shifted_prediction.size())
+                        # print(torch.argmax(shifted_prediction, dim=-1)[0][:3])
+
+                        # print("\nshifted_target")
+                        # print(shifted_target.size())
+                        # print(shifted_target[0][:3])
+                        # print()
+
+
+                        # unshifted_target_flat, unshifted_prediction_flat = self.flatten_batch(padded_targets, out)
+                        # unshifted_prediction_indices = torch.argmax(unshifted_prediction_flat, dim=-1)
+
+                        target_flat, prediction_flat = self.flatten_batch(shifted_target, shifted_prediction)
                         prediction_indices = torch.argmax(prediction_flat, dim=-1)
+
 
                         # Calculate loss & perform backprop
                         self.optimizer.zero_grad(set_to_none=True)
                         loss = criterion(prediction_flat, target_flat)
-                        # NOTE: Mask pad indices from loss before backward, instead of unpadding before loss calculation
+
+                        # NOTE: Padded indices are masked via "ignore_index" option in Cross Entropy Loss
+                        #       Loss tensor can be extracted by adding "reduction='none'" to Cross Entropy Loss
+
+                        # print(unshifted_prediction_indices[:200])
+                        # print(unshifted_target_flat[:200])
+                        # print(prediction_indices[:199])
+                        # print(target_flat[:199])
+                        # print(loss[:200])
+
+                        # boolean_mask = target_flat != self.vocabulary.pad_token_tensor.item()
+                        # masked_loss = loss * boolean_mask
+                        # final_loss = masked_loss.sum() / boolean_mask.sum()
+
+                        # print(masked_loss[:200])
+                        # print(masked_loss.sum())
+                        # print(boolean_mask.sum())
+                        # print(final_loss)
+
                         self.scaler.scale(loss).backward()
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
@@ -494,15 +610,20 @@ class Trainer:
                     step_time = time.time() - step_start
                     running_time = time.time() - running_start
 
+                    pad_mask = (target_flat != self.vocabulary.pad_token_tensor.item())
                     running_count += len(batch)
-                    running_tokens += len(target_flat)
+                    # running_tokens += len(target_flat)
+                    running_tokens += pad_mask.sum()
                     running_loss += loss.item()
-                    running_error += torch.sum((prediction_indices != target_flat).float()).item()
+                    # running_error += torch.sum((prediction_indices != target_flat).float()).item()
+                    running_error += ((prediction_indices != target_flat) * pad_mask).sum()
 
+                    # Cooldown
                     if self.cooldown is not None and self.cooldown > 0:
                         time.sleep(self.cooldown)
 
-                    if print_every_step is not None and (i + 1) % print_every_step == 0:
+                    # Log training output
+                    if self.output_every_num_steps is not None and (i + 1) % self.output_every_num_steps == 0:
                         word_error_rate = running_error / running_tokens
                         running_tokens_per_sec = running_tokens / running_time
                         running_tokens_per_sequence = running_tokens / running_count
@@ -528,6 +649,7 @@ class Trainer:
                         running_loss = 0
                         running_error = 0
 
+                    # Perform validation on test data
                     if test_every_step is not None and (i + 1) % test_every_step == 0:
                         # Test (Validation)
                         print('Running validation...')
@@ -538,16 +660,21 @@ class Trainer:
                         test_error = 0
                         self.model.eval()
                         for test_batch in test_loader:
-                            padded_sources = self.padded_source_from_batch(batch=test_batch)
-                            padded_targets, pad_indices = self.padded_target_from_batch(batch=test_batch)
+                            padded_sources = padded_source_from_batch(batch=test_batch,
+                                                                      max_source_length=self.max_source_length,
+                                                                      use_fixed_padding=self.use_fixed_padding,
+                                                                      device=self.device)
+                            padded_targets, pad_indices = padded_target_from_batch(batch=test_batch,
+                                                                                   vocabulary=self.vocabulary,
+                                                                                   max_target_length=self.max_target_length,
+                                                                                   use_fixed_padding=self.use_fixed_padding,
+                                                                                   device=self.device)
 
                             with torch.no_grad():
                                 # Becomes no-op if self.use_amp is False
                                 # NOTE: passing self.device to device_type gives error, keep on 'cuda' even if device is cpu
                                 with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=self.use_amp):
-                                    (out, embedded_source, pos_encoded_source, encoder_out, embedded_target, pos_encoded_target,
-                                    target_mask, decoder_out) = \
-                                        self.model(encoder_source=padded_sources, decoder_source=padded_targets)
+                                    out, *_ = self.model(encoder_source=padded_sources, decoder_source=padded_targets)
 
                                     target_flat, prediction_flat = self.unpad_and_flatten_batch(padded_targets, out, pad_indices)
                                     prediction_indices = torch.argmax(prediction_flat, dim=-1)
@@ -579,32 +706,72 @@ class Trainer:
                 # train_writer.add_hparams({ 'lr': self.lr }, { 'WER': word_error_rate }, run_name=str(self.run_path))
                 # train_writer.add_embedding for embedding projector
 
-                # Save models & output model sample
+                # Save models
                 if self.checkpoint_after_epoch is not None and (epoch + 1) % self.checkpoint_after_epoch == 0:
                     self.save_models(epoch=epoch + 1, global_step=global_step)
                     print()
                     print('Models saved.')
+
+                # Output random samples
+                if self.num_samples_to_output is not None:
                     self.model.eval()
 
-                    # Take random sample from dataset
-                    random_index = torch.randint(low=0, high=len(self.data_train), size=(1,)).item()
-                    random_sample_source = torch.tensor(self.data_train[random_index][0], device=self.device).unsqueeze(0)
-                    random_sample_target = self.vocabulary.build_tokenized_target(self.data_train[random_index][1]).unsqueeze(0)
+                    # Take batch_size random samples from train dataset
+                    random_sample_batch = []
+                    for i in range(self.batch_size):
+                        random_index = torch.randint(low=0, high=len(self.data_train), size=(1,)).item()
+                        random_sample = self.data_train[random_index]
+                        # If random sample overflows max source or target length, get a new sample
+                        while len(random_sample[0]) > self.max_source_length or len(random_sample[1]) > self.max_target_length:
+                            random_index = torch.randint(low=0, high=len(self.data_train), size=(1,)).item()
+                            random_sample = self.data_train[random_index]
+                        random_sample_batch.append(random_sample)
+
+                    # Pad random samples to max length
+                    random_sample_padded_sources = padded_source_from_batch(batch=random_sample_batch,
+                                                                            max_source_length=self.max_source_length,
+                                                                            use_fixed_padding=self.use_fixed_padding,
+                                                                            device=self.device)
+                    random_sample_padded_targets, _ = padded_target_from_batch(batch=random_sample_batch,
+                                                                               vocabulary=self.vocabulary,
+                                                                               max_target_length=self.max_target_length,
+                                                                               use_fixed_padding=self.use_fixed_padding,
+                                                                               device=self.device)
+
+                    # random_sample_source = torch.tensor(self.data_train[random_index][0], device=self.device).unsqueeze(0)
+                    # random_sample_target = self.vocabulary.build_tokenized_target(self.data_train[random_index][1]).unsqueeze(0)
 
                     # Copy data across batch size
-                    random_sample_source = random_sample_source.expand((self.batch_size,
-                                                                        random_sample_source.shape[1], random_sample_source.shape[2]))
-                    random_sample_target = random_sample_target.expand((self.batch_size, random_sample_target.shape[1]))
+                    # random_sample_source = random_sample_source.expand((self.batch_size,
+                    #                                                     random_sample_source.shape[1], random_sample_source.shape[2]))
+                    # random_sample_target = random_sample_target.expand((self.batch_size, random_sample_target.shape[1]))
 
                     # Iterate through the random sample target sequence and output the prediction
-                    for i in range(1, random_sample_target.shape[1] + 1):
-                        decoder_in = random_sample_target[:, :i]
-                        sample_out, *_ = self.model(encoder_source=random_sample_source, decoder_source=decoder_in)
-                        sample_out_indices = torch.argmax(sample_out, dim=-1)
+                    for i in range(1, random_sample_padded_targets.shape[1] + 1):
+                        # decoder_in = random_sample_target[:, :i]
+
+                        # Trim batch targets up to current step and re-pad the target sequence
+                        sequence_trimmed_targets = random_sample_padded_targets[:, :i]
+                        sequence_trimmed_padded_targets = torch.stack([pad_target(target=item, max_length=self.max_target_length, vocabulary=self.vocabulary)[0] for item in sequence_trimmed_targets])
+
+                        # If all have reached pad, stop
+                        all_finished = True
+                        for n in range(self.num_samples_to_output):
+                            if sequence_trimmed_targets[n][-1] != self.vocabulary.pad_token_tensor.item():
+                                all_finished = False
+                        if all_finished:
+                            break
+                        
+                        # Get prediction from model
+                        sample_out, *_ = self.model(encoder_source=random_sample_padded_sources, decoder_source=sequence_trimmed_padded_targets)
+                        sample_out_prediction_indices = torch.argmax(sample_out, dim=-1)
+
+                        # Output the prediction for each sample in the batch
                         print()
-                        print('Decoder Input: ', ' '.join(self.vocabulary.get_sequence_from_tensor(decoder_in[0])))
-                        print('Prediction:    ', ' '.join(self.vocabulary.get_sequence_from_tensor(sample_out_indices[0])))
-                        print()
+                        for n in range(self.num_samples_to_output):
+                            print(f'Decoder Input[{n}]: ', ' '.join(self.vocabulary.get_sequence_from_tensor(sequence_trimmed_targets[n])))
+                            print(f'Prediction[{n}]:    ', ' '.join(self.vocabulary.get_sequence_from_tensor(sample_out_prediction_indices[n][:i])))
+                            print()
                     self.model.train()
 
         except KeyboardInterrupt:

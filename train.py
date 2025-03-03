@@ -48,13 +48,15 @@ def main() -> None:
     parser.add_argument('--dropout', '-d', type=float, nargs='?',
                         default=config.model.dropout, help='Dropout probability')
     parser.add_argument('--max_source_length', '-ms', type=int, nargs='?',
-                        default=config.model.max_source_length, help='Max sequence length of source mfcc data')
+                        default=config.model.max_source_length, help='Max sequence length of source audio data (in seconds)')
     parser.add_argument('--max_target_length', '-mt', type=int, nargs='?',
                         default=config.model.max_target_length, help='Max sequence length of target word tokens')
     parser.add_argument('--max_vocab_size', '-mv', type=int, nargs='?',
                         default=config.model.max_vocab_size, help='Max size of vocabulary')
-    parser.add_argument('--num_layers', '-nl', type=int, nargs='?',
-                        default=config.model.num_layers, help='Number of encoder/decoder layers')
+    parser.add_argument('--num_encoder_layers', '-el', type=int, nargs='?',
+                        default=config.model.num_encoder_layers, help='Number of encoder layers')
+    parser.add_argument('--num_decoder_layers', '-dl', type=int, nargs='?',
+                        default=config.model.num_decoder_layers, help='Number of decoder layers')
     parser.add_argument('--batch_size', '-b', type=int, nargs='?',
                         default=config.model.batch_size, help='Size of each batch')
     parser.add_argument('--num_epochs', '-ne', type=int, nargs='?',
@@ -82,13 +84,17 @@ def main() -> None:
                         default=config.training.splits_test, help='Name of dataset splits for testing (validation)')
     parser.add_argument('--subset', '-sub', type=int, nargs='?',
                         default=config.training.subset, help='Use a smaller subset with x number of files. None = use all')
-    parser.add_argument('--output_lines_per_epoch', '-le', type=int, nargs='?',
-                        default=config.output.output_lines_per_epoch, help='Number of lines of output per epoch')
+    parser.add_argument('--output_every_num_steps', '-ol', type=int, nargs='?',
+                        default=config.output.output_every_num_steps, help='Number of lines of output per epoch')
     parser.add_argument('--checkpoint_after_epoch', '-se', type=int, nargs='?',
                         default=config.output.checkpoint_after_epoch,
                         help='Save model checkpoint & sample prediction after x number of epochs')
     parser.add_argument('--tests_per_epoch', '-te', type=int, nargs='?',
                         default=config.output.tests_per_epoch, help='Number of tests (validations) to perform every epoch')
+    parser.add_argument('--num_samples_to_output', '-no', type=int, nargs='?',
+                        default=config.output.num_samples_to_output, help='Number of random samples to output every epoch')
+    parser.add_argument('--run_name', '-r', type=str, nargs='?',
+                        default=None, help='Custom run name')
     parser.add_argument('--debug', action='store_true', help='Run through only one training example for debugging')
     parser.add_argument('--clear_runs', '-c', action='store_true', help='Remove the runs directory to start fresh')
     args = parser.parse_args()
@@ -118,7 +124,8 @@ def main() -> None:
 
     trainer = Trainer(config=config,
                       d_model=args.d_model,
-                      num_layers=args.num_layers,
+                      num_encoder_layers=args.num_encoder_layers,
+                      num_decoder_layers=args.num_decoder_layers,
                       dropout=args.dropout,
                       num_heads=args.num_heads,
                       max_source_length=args.max_source_length,
@@ -135,14 +142,16 @@ def main() -> None:
                       weight_decay=args.weight_decay,
                       num_warmup_steps=args.num_warmup_steps,
                       cooldown=args.cooldown,
-                      output_lines_per_epoch=args.output_lines_per_epoch,
+                      output_every_num_steps=args.output_every_num_steps,
                       checkpoint_after_epoch=args.checkpoint_after_epoch,
                       tests_per_epoch=args.tests_per_epoch,
+                      num_samples_to_output=args.num_samples_to_output,
                       checkpoint_path=args.checkpoint_path,
                       reset_lr=args.reset_lr,
                       splits_train=args.splits_train,
                       splits_test=args.splits_test,
-                      subset=args.subset)
+                      subset=args.subset,
+                      run_name=args.run_name)
     trainer.train()
 
 

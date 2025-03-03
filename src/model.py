@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import torch
 from torch import Tensor, nn
-from torch.nn.functional import log_softmax, softmax
+from torch.nn.functional import log_softmax, softmax, max_pool1d
 
 if TYPE_CHECKING:
     from src.vocabulary import Vocabulary
@@ -41,35 +41,42 @@ class AudioEmbedder1d(nn.Module):
     - source: preprocessed MFCC data of shape `(N, c, d_m)`, where `N` is the number of batches,
     `c` is the number of chunks, and `d_m` is the dimension of the MFCC vector
     - target_length (t): length of the target sequence
-    - embed_dim (d_v): dimension of the word embedding vector
+    - d_model (d_v): dimension of the word embedding vector
 
     (N, c, d_m) -> (N, t, d_v)
     Ex: 187 chunks of 13 mfccs, target length of 20 words, word embedding dimension of 64
     (1, 187, 13) -> (1, 20, 64)
     '''
 
-    def __init__(self, embed_dim: int, device: str, mfcc_depth: int) -> None:
+    def __init__(self, d_model: int, device: str, mfcc_depth: int) -> None:
         super().__init__()
-        conv_depth = embed_dim // 4
+        intermediate_depth = d_model // 4
         sequence_compression_rate = 2
+        forward_expansion = 4
         self.device = device
-        self.embed_dim = embed_dim
+        self.d_model = d_model
         self.conv = nn.Sequential(
-            nn.Conv1d(in_channels=mfcc_depth, out_channels=conv_depth, kernel_size=5, stride=sequence_compression_rate, padding=2),
+            nn.Conv1d(in_channels=mfcc_depth, out_channels=intermediate_depth, kernel_size=5, stride=sequence_compression_rate, padding=2),
             nn.ReLU(),
-            nn.Conv1d(in_channels=conv_depth, out_channels=embed_dim, kernel_size=5, stride=sequence_compression_rate, padding=2),
+            nn.Conv1d(in_channels=intermediate_depth, out_channels=d_model, kernel_size=5, stride=sequence_compression_rate, padding=2),
             nn.ReLU(),
         )
-        self.norm = nn.LayerNorm(embed_dim, device=self.device)
-        self.fc = nn.Linear(in_features=embed_dim, out_features=embed_dim, device=self.device)
+        self.norm = nn.LayerNorm(d_model, device=self.device)
+        # self.fc = nn.Linear(in_features=d_model, out_features=d_model, device=self.device)
+        self.feed_forward = nn.Sequential(
+            nn.Linear(d_model, d_model * forward_expansion),
+            nn.ReLU(),
+            nn.Linear(d_model * forward_expansion, d_model),
+        )
 
     def forward(self, source: Tensor) -> Tensor:
-        # Input shape: (N, seq_len, d_mfcc)
-        out = source.permute(0, 2, 1)  # (N, d_mfcc, seq_len)
-        out = self.conv(out)  # (N, conv_depth, seq_len/2)
-        out = out.permute(0, 2, 1)  # (N, seq_len/2, conv_depth)
+        # -> (N, seq_len, mfcc_depth)
+        out = source.permute(0, 2, 1)      # -> (N, mfcc_depth, seq_len)
+        out = self.conv(out)               # -> (N, intermediate_depth, seq_len / 2) -> (N, d_model, seq_len / 4)
+        out = out.permute(0, 2, 1)         # -> (N, seq_len / 4, d_model)
         out = self.norm(out)
-        out = self.fc(out)  # (N, seq_len/2, d_model)
+        out = self.feed_forward(out)
+        # (N, seq_len / 4, d_model) ->
         return out
 
 
@@ -90,19 +97,19 @@ class AudioEmbedder2d(nn.Module):
     - source: preprocessed MFCC data of shape `(N, c, d_m)`, where `N` is the number of batches,
     `c` is the number of chunks, and `d_m` is the dimension of the MFCC vector
     - target_length (t): length of the target sequence
-    - embed_dim (d_v): dimension of the word embedding vector
+    - d_model (d_v): dimension of the word embedding vector
 
     (N, c, d_m) -> (N, t, d_v)
     Ex: 187 chunks of 13 mfccs, target length of 20 words, word embedding dimension of 64
     (1, 187, 13) -> (1, 20, 64)
     '''
-    def __init__(self, embed_dim: int, device: str, mfcc_depth: int) -> None:
+    def __init__(self, d_model: int, device: str, mfcc_depth: int) -> None:
         super().__init__()
         conv1_depth = 16
         conv2_depth = 64
         linear_in_depth = conv2_depth * (mfcc_depth // 4)  # 64*(d_mfcc/4)
         self.device = device
-        self.embed_dim = embed_dim
+        self.d_model = d_model
         self.conv1 = nn.Sequential(
             nn.Conv2d(in_channels=1, out_channels=conv1_depth, kernel_size=5, padding=2),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0),
@@ -114,7 +121,7 @@ class AudioEmbedder2d(nn.Module):
             nn.ReLU(),
         )
         self.norm = nn.LayerNorm(linear_in_depth, device=self.device)
-        self.fc = nn.Linear(in_features=linear_in_depth, out_features=self.embed_dim, device=self.device)
+        self.fc = nn.Linear(in_features=linear_in_depth, out_features=self.d_model, device=self.device)
 
     def forward(self, source: Tensor) -> Tensor:
         # Input shape: (N, seq_len, d_mfcc)
@@ -175,7 +182,7 @@ class WordEmbedder(nn.Module):
         super().__init__()
         self.d_model = d_model
         # If we have not pre-trained, we have no word vectors yet
-        # Initalize randomized word embedding vectors of size embed_dim
+        # Initalize randomized word embedding vectors of size d_model
         self.embeddings_lut = nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
         self.norm = nn.LayerNorm(d_model)
 
@@ -220,7 +227,7 @@ class PositionalEncoding(nn.Module):
     --
     https://pytorch.org/tutorials/beginner/transformer_tutorial.html
     '''
-    def __init__(self, d_model: int, dropout: float | None, max_length: int = 5000) -> None:
+    def __init__(self, d_model: int, dropout: float | None, max_length: int) -> None:
         super().__init__()
         self.dropout = nn.Dropout(p=dropout) if dropout is not None else None
 
@@ -238,7 +245,7 @@ class PositionalEncoding(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         '''
         Parameters:
-        - x: Tensor, shape `[sequence_length, embed_dim]`
+        - x: Tensor, shape `[sequence_length, d_model]`
         '''
         x += self.positional_encoding[:x.size(1)]  # cut to sequence_length (1), not batch_size (0)
         return self.dropout(x) if self.dropout is not None else x
@@ -253,10 +260,13 @@ class MultiheadAttention(nn.Module):
         self.head_dim = d_model // num_heads
         assert self.head_dim * num_heads == self.d_model
 
-        self.linear = nn.Linear(d_model, d_model)
+        # TODO: ADD SEPARATE LINEAR FOR EACH Q K V !!!
+        # self.linear = nn.Linear(d_model, d_model)
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout) if dropout is not None else None
-
-        self.attention = None
 
     def _attention(self, query: Tensor, key: Tensor, value: Tensor, mask: Tensor | None = None,
                    dropout: float | None = None) -> Tensor:
@@ -264,10 +274,10 @@ class MultiheadAttention(nn.Module):
         if mask is not None:
             trimmed_mask = mask[:, :, :scores.shape[-2], :scores.shape[-1]]
             scores = scores.masked_fill(trimmed_mask == 0, -1e9)
-        prob = softmax(scores, dim=-1)
+        attn = softmax(scores, dim=-1)
         if dropout is not None:
-            prob = dropout(prob)
-        return torch.matmul(prob, value), prob
+            attn = dropout(attn)
+        return torch.matmul(attn, value), attn
 
     def forward(self, query: Tensor, key: Tensor, value: Tensor, mask: Tensor | None = None) -> Tensor:
         N = query.shape[0]  # batch size
@@ -276,28 +286,28 @@ class MultiheadAttention(nn.Module):
             mask = mask.unsqueeze(1)
 
         # Linear projections
-        value = self.linear(value)
-        key = self.linear(key)
-        query = self.linear(query)
+        query = self.q_proj(query)
+        key   = self.k_proj(key)
+        value = self.v_proj(value)
 
         # 1) Split embedding into self.num_heads pieces and stack in new dimensionality
         # This compacting is done for better dependency & computation optimization (see paper)
-        # Reshape: (batch_size, sequence_length, embed_dim) -> (batch_size, query_length, num_heads, head_dim)
+        # Reshape: (batch_size, sequence_length, d_model) -> (batch_size, query_length, num_heads, head_dim)
         # Then: (batch_size, query_length, num_heads, head_dim) ->
         #       (batch_size, num_heads, query_length, head_dim)
-        value = value.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        key = key.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
         query = query.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        key   = key.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        value = value.reshape(N, -1, self.num_heads, self.head_dim).transpose(1, 2)
 
         # 2) Apply attention on all projected vectors
-        x, self.attention = self._attention(query, key, value, mask=mask, dropout=self.dropout)
+        x, attention = self._attention(query, key, value, mask=mask, dropout=self.dropout)
 
         # 3) Concat (flatten last 2 dimensions)
         # Essentially, undo the reshape we did earlier
         # Final shape: (batch_size, )
         out = x.transpose(0, 1).contiguous().view(N, -1, self.num_heads * self.head_dim)
-        out = self.linear(out)
-        return out
+        out = self.out_proj(out)
+        return out, attention
 
 
 class EncoderBlock(nn.Module):
@@ -317,11 +327,12 @@ class EncoderBlock(nn.Module):
 
     def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
         out = x
-        attention = self.attention(out, out, out, mask)
-        out = self.dropout(self.norm1(attention + out)) if self.dropout is not None else self.norm1(attention + out)
+        attention, attn_weights = self.attention(out, out, out, mask)
+        out = self.norm1(out + self.dropout(attention)) if self.dropout is not None else self.norm1(out + attention)
         forward = self.feed_forward(out)
-        out = self.dropout(self.norm2(forward + out)) if self.dropout is not None else self.norm2(forward + out)
-        return out
+        out = self.norm2(out + self.dropout(forward)) if self.dropout is not None else self.norm2(out + forward)
+        # print(out[0][0][:20])
+        return out, attn_weights
 
 
 class Encoder(nn.Module):
@@ -366,9 +377,12 @@ class Encoder(nn.Module):
         Pass the inputs (and mask) through the layers in turn.
         '''
         out = x
+        all_attn_weights = []
         for layer in self.encoder_layers:
-            out = layer(out, mask)
-        return out
+            out, attn_weights = layer(out, mask)
+            all_attn_weights.append(attn_weights)
+        all_attn_weights = torch.stack(all_attn_weights)  # [num_blocks, batch_size, num_heads, seq_len/4, seq_len/4], compressed x4 from conv
+        return out, all_attn_weights
 
 
 class DecoderBlock(nn.Module):
@@ -390,13 +404,13 @@ class DecoderBlock(nn.Module):
     def forward(self, x: Tensor, encoder_out: Tensor, source_mask: Tensor | None = None,
                 target_mask: Tensor | None = None) -> Tensor:
         out = x
-        self_attention = self.attention(out, out, out, target_mask)
+        self_attention, self_attn_weights = self.attention(out, out, out, target_mask)
         out = self.dropout(self.norm1(self_attention + out)) if self.dropout is not None else self.norm1(self_attention + out)
-        cross_attention = self.attention(out, encoder_out, encoder_out, source_mask)
+        cross_attention, cross_attn_weights = self.attention(out, encoder_out, encoder_out, source_mask)
         out = self.dropout(self.norm2(cross_attention + out)) if self.dropout is not None else self.norm2(cross_attention + out)
         forward = self.feed_forward(out)
         out = self.dropout(self.norm3(forward + out)) if self.dropout is not None else self.norm3(forward + out)
-        return out
+        return out, self_attn_weights, cross_attn_weights
 
 
 class Decoder(nn.Module):
@@ -452,9 +466,15 @@ class Decoder(nn.Module):
         Pass the inputs (and mask) through the layers in turn.
         '''
         out = x
+        all_self_attn_weights = []
+        all_cross_attn_weights = []
         for layer in self.decoder_layers:
-            out = layer(out, encoder_out, source_mask, target_mask)
-        return out
+            out, self_attn_weights, cross_attn_weights = layer(out, encoder_out, source_mask, target_mask)
+            all_self_attn_weights.append(self_attn_weights)
+            all_cross_attn_weights.append(cross_attn_weights)
+        all_self_attn_weights = torch.stack(all_self_attn_weights)  # [num_blocks, batch_size, num_heads, seq_len, seq_len]
+        all_cross_attn_weights = torch.stack(all_cross_attn_weights)  # [num_blocks, batch_size, num_heads, seq_len, seq_len]
+        return out, all_self_attn_weights, all_cross_attn_weights
 
 
 class TargetMask(nn.Module):
@@ -490,7 +510,8 @@ class Transformer(nn.Module):
                  vocabulary: Vocabulary,
                  d_model: int,
                  batch_size: int,
-                 num_layers: int,
+                 num_encoder_layers: int,
+                 num_decoder_layers: int,
                  dropout: float,
                  num_heads: int,
                  max_source_length: int,
@@ -504,17 +525,25 @@ class Transformer(nn.Module):
         self.d_model = d_model
         self.device = device
         self.debug = debug
-        self.audio_embedder = AudioEmbedder1d(embed_dim=d_model, device=device, mfcc_depth=mfcc_depth)
+        self.audio_embedder = AudioEmbedder1d(d_model=d_model, device=device, mfcc_depth=mfcc_depth)
         self.word_embeddings = WordEmbedder(vocab_size=vocab_size, d_model=d_model)
-        self.positional_encoding = PositionalEncoding(d_model=d_model, dropout=dropout, max_length=max_source_length)
-        self.encoder = Encoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
-        self.decoder = Decoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_layers, device=device)
+        self.encoder_positional_encoding = PositionalEncoding(d_model=d_model, dropout=dropout, max_length=max_source_length)
+        self.decoder_positional_encoding = PositionalEncoding(d_model=d_model, dropout=dropout, max_length=max_target_length)
+        self.encoder = Encoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_encoder_layers, device=device)
+        self.decoder = Decoder(d_model=d_model, dropout=dropout, num_heads=num_heads, num_layers=num_decoder_layers, device=device)
         self.linear = nn.Linear(d_model, vocab_size)
         self.target_mask = TargetMask(batch_size=batch_size, max_length=max_target_length, device=device)
 
     @staticmethod
     def source_mask(source: Tensor) -> Tensor:
-        return (source != 0)
+        # [batch_size, seq_len, mfcc_depth]
+        energy = source[:, :, 1:]  # Ignore first value (C0), as it contains large values for silence
+        energy = energy.abs().sum(dim=-1)                          # -> [batch_size, seq_len]
+        downsampled = max_pool1d(energy, kernel_size=4, stride=4)  # -> [batch_size, seq_len/4]
+        bool_mask = (downsampled != 0)
+        bool_mask = bool_mask.unsqueeze(1)                         # -> [batch_size, 1, seq_len/4]
+        # [batch_size, seq_len/4, seq_len/4]
+        return bool_mask.expand(downsampled.shape[0], downsampled.shape[-1], downsampled.shape[-1])
 
     def forward(self, encoder_source: Tensor, decoder_source: Tensor) -> tuple:
         '''
@@ -522,17 +551,16 @@ class Transformer(nn.Module):
         Target (indices) shape: (batch_size, sequence_length)
         '''
         # Encoder
+        source_mask = self.source_mask(source=encoder_source)
         embedded_source = self.audio_embedder(source=encoder_source)
-        # source_mask = self.source_mask(source=embedded_source)
-        source_mask = None
-        pos_encoded_source = self.positional_encoding(embedded_source)
-        encoder_out = self.encoder(x=pos_encoded_source, mask=source_mask)
+        pos_encoded_source = self.encoder_positional_encoding(embedded_source)
+        encoder_out, encoder_attn_weights = self.encoder(x=pos_encoded_source, mask=source_mask)
 
         # Decoder
         target_mask = self.target_mask(target=decoder_source, pad_token_tensor=self.vocabulary.pad_token_tensor)
         embedded_target = self.word_embeddings(decoder_source)
-        pos_encoded_target = self.positional_encoding(embedded_target)
-        decoder_out = self.decoder(x=pos_encoded_target, encoder_out=encoder_out, source_mask=source_mask, target_mask=target_mask)
+        pos_encoded_target = self.decoder_positional_encoding(embedded_target)
+        decoder_out, decoder_self_attn_weights, decoder_cross_attn_weights = self.decoder(x=pos_encoded_target, encoder_out=encoder_out, source_mask=source_mask, target_mask=target_mask)
 
         # Test using only encoder
         # embedded_target = torch.zeros([1,])
@@ -543,5 +571,5 @@ class Transformer(nn.Module):
         out = self.linear(decoder_out)
         out = log_softmax(self.linear(decoder_out), dim=-1)
 
-        return (out, embedded_source, pos_encoded_source, encoder_out,
-                embedded_target, pos_encoded_target, target_mask, decoder_out)
+        return (out, embedded_source, pos_encoded_source, encoder_out, encoder_attn_weights,
+                embedded_target, pos_encoded_target, target_mask, decoder_out, decoder_self_attn_weights, decoder_cross_attn_weights)

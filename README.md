@@ -1,9 +1,8 @@
 # Speech to Text
 
-A transformer based neural network designed for Automatic Speech Recognition (ASR). Takes in human speech audio
-and outputs readable text in the target language.
+A transformer based neural network designed for Speech to Text (S2T) and Automatic Speech Recognition (ASR) tasks. Takes in human speech audio and outputs readable text in the target language.
 
-Initial training done on the LibriSpeech dataset.
+Current available langauges: English
 
 
 # Table of Contents
@@ -14,6 +13,8 @@ Initial training done on the LibriSpeech dataset.
 	- [Preprocessing](#preprocessing)
 	- [Training](#training)
 	- [Evaluation](#evaluation)
+- [Dataset](#dataset)
+- [Word Embeddings](#word-embeddings)
 - [References](#references)
 
 
@@ -39,17 +40,17 @@ python train.py --help
 ## Preprocessing
 
 To begin training, the MFCC data needs to be derived from the raw audio samples. To do this preprocessing,
-run the preprocess module script:
+run the preprocess module script for each split:
 
 ```bash
-python preprocess.py
+python preprocess.py -s [split_name]
 ```
 
 This will download the selected dataset split (default is "clean-dev") into the `data` folder, and extract the MFCC
 data to the `mfcc` folder, which will be used in training. Alternatively, you can run the train module directly, and
 the preprocessing will begin automatically.
 
-A custom dataset can be placed in the `data` folder in lieu of a LibriSpeech split.
+A custom dataset can be placed in the `data` folder in lieu of the provided splits, **as long as the split is added to the `splits.py` class.**
 
 You can also check out samples from the dataset, such as playing audio files and displaying spectrogram data. See the help
 flag for more details.
@@ -73,13 +74,30 @@ saved to the `models` folder.
 To evaluate a trained model on custom audio files, run the evaluate module script:
 
 ```bash
-python evaluate.py [file paths]
+python evaluate.py -m [model] -f [directory_containing_audio_files]
 ```
 
 This will automatically preprecess the audio files and output the model's prediction.
 
 
+# Dataset
+
+The model's training regimen incorporates data from the following public datasets:
+
+- [CommonVoice Corpus 20.0](https://commonvoice.mozilla.org/en/datasets)
+- [LibriSpeech](https://pytorch.org/audio/stable/generated/torchaudio.datasets.LIBRISPEECH.html)
+
+
+# Word Embeddings
+
+This model has not incorporated any pre-trained vectorized word embeddings. They have been randomly initalized and learned directly from the training datasets.
+
+Pre-trained embeddings can be loaded via PyTorch's `nn.Embedding` class inside the `WordEmbedder` module.
+
+
 # References
+
+The following resources were used as inspiration for the neural network's architecture.
 
 - [Attention Is All You Need](https://papers.nips.cc/paper/2017/file/3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf), the original paper which has been cited [over 90,000 times](https://scholar.google.com/scholar?lr&ie=UTF-8&oe=UTF-8&q=Attention+is+All+You+Need+Vaswani+Shazeer+Parmar+Uszkoreit+Jones+Gomez+Kaiser+Polosukhin)
 	- [Annotated version (Harvard)](https://nlp.seas.harvard.edu/2018/04/03/attention.html)

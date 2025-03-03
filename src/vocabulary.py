@@ -15,10 +15,10 @@ class Vocabulary:
         self.eos_token = '<eos>'
         self.pad_token = '<pad>'
         self.unk_token = '<unk>'
-        self.sos_token_tensor = 0
-        self.eos_token_tensor = 0
-        self.pad_token_tensor = 0
-        self.unk_token_tensor = 0
+        self.sos_token_tensor: Tensor = torch.tensor(0, dtype=torch.long, device=self.device)
+        self.eos_token_tensor: Tensor = torch.tensor(0, dtype=torch.long, device=self.device)
+        self.pad_token_tensor: Tensor = torch.tensor(0, dtype=torch.long, device=self.device)
+        self.unk_token_tensor: Tensor = torch.tensor(0, dtype=torch.long, device=self.device)
         self.vocab = None
         self.vocab_size = 0
         self.max_size = max_size
